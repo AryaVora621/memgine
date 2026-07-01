@@ -46,15 +46,18 @@ interface ProjectAgent {
 
 const MODELS = [
   // Native Direct Keys
-  { id: 'claude-sonnet-4-20250514', label: 'CLAUDE SONNET 4 (NATIVE)' },
+  { id: 'claude-5-sonnet-20260630', label: 'CLAUDE SONNET 5 (NATIVE)' },
   { id: 'claude-4-opus', label: 'CLAUDE 4 OPUS (NATIVE)' },
   { id: 'gpt-4o', label: 'GPT-4O (NATIVE)' },
   { id: 'gemini-3.5-flash', label: 'GEMINI 3.5 FLASH (NATIVE)' },
   { id: 'gemini-3.1-pro', label: 'GEMINI 3.1 PRO (NATIVE)' },
 
   // OpenRouter (Paid Models)
-  { id: 'anthropic/claude-3.5-sonnet', label: 'OR / CLAUDE 3.5 SONNET (PAID)' },
+  { id: 'anthropic/claude-5-sonnet-20260630', label: 'OR / CLAUDE SONNET 5 (PAID)' },
+  { id: 'anthropic/claude-4-opus', label: 'OR / CLAUDE 4 OPUS (PAID)' },
   { id: 'openai/gpt-4o', label: 'OR / GPT-4O (PAID)' },
+  { id: 'google/gemini-3.5-flash', label: 'OR / GEMINI 3.5 FLASH (PAID)' },
+  { id: 'google/gemini-3.1-pro', label: 'OR / GEMINI 3.1 PRO (PAID)' },
   { id: 'meta-llama/llama-3.3-70b-instruct', label: 'OR / LLAMA 3.3 70B (PAID)' },
   { id: 'deepseek/deepseek-chat', label: 'OR / DEEPSEEK V3 (PAID / CHEAP)' },
 
@@ -62,6 +65,8 @@ const MODELS = [
   { id: 'meta-llama/llama-3.1-8b-instruct:free', label: 'OR / LLAMA 3.1 8B (FREE)' },
   { id: 'google/gemma-2-9b-it:free', label: 'OR / GEMMA 2 9B (FREE)' },
   { id: 'qwen/qwen-2-7b-instruct:free', label: 'OR / QWEN 2 7B (FREE)' },
+  { id: 'mistralai/mistral-7b-instruct:free', label: 'OR / MISTRAL 7B (FREE)' },
+  { id: 'openchat/openchat-7b:free', label: 'OR / OPENCHAT 7B (FREE)' },
   { id: 'openrouter/auto', label: 'OR / AUTO-ROUTER' },
 
   // Local Models

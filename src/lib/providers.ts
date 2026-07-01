@@ -24,7 +24,7 @@ interface ApiKeys {
 
 // ── Model → Provider mapping ──
 const MODEL_PROVIDER_MAP: Record<string, string> = {
-  'claude-sonnet-4-20250514': 'anthropic',
+  'claude-5-sonnet-20260630': 'anthropic',
   'claude-4-opus': 'anthropic',
   'gpt-4.1': 'openai',
   'gpt-4o': 'openai',
@@ -45,7 +45,7 @@ async function callOpenRouter(messages: ChatMessage[], model: string, apiKey: st
       'X-Title': 'Notebook',
     },
     body: JSON.stringify({
-      model: model === 'openrouter/auto' ? 'anthropic/claude-sonnet-4-20250514' : model,
+      model: model === 'openrouter/auto' ? 'anthropic/claude-5-sonnet-20260630' : model,
       messages,
     }),
   });
