@@ -62,8 +62,10 @@ const MODELS = [
   { id: 'deepseek/deepseek-chat', label: 'OR / DEEPSEEK V3 (PAID / CHEAP)' },
 
   // OpenRouter (Free Models)
+  { id: 'meta-llama/llama-3.3-70b-instruct:free', label: 'OR / LLAMA 3.3 70B (FREE)' },
   { id: 'meta-llama/llama-3.1-8b-instruct:free', label: 'OR / LLAMA 3.1 8B (FREE)' },
-  { id: 'google/gemma-2-9b-it:free', label: 'OR / GEMMA 2 9B (FREE)' },
+  { id: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free', label: 'OR / NEMOTRON 30B (FREE)' },
+  { id: 'qwen/qwen3-coder:free', label: 'OR / QWEN 3 CODER (FREE)' },
   { id: 'qwen/qwen-2-7b-instruct:free', label: 'OR / QWEN 2 7B (FREE)' },
   { id: 'mistralai/mistral-7b-instruct:free', label: 'OR / MISTRAL 7B (FREE)' },
   { id: 'openchat/openchat-7b:free', label: 'OR / OPENCHAT 7B (FREE)' },
@@ -76,6 +78,77 @@ const MODELS = [
 
 const ROOMS = ['GENERAL', 'DATABASE', 'FRONTEND', 'APIS', 'ARCHITECTURE'];
 const PERSONA_FILES: Array<'IDENTITY.md' | 'SOUL.md' | 'AGENTS.md'> = ['IDENTITY.md', 'SOUL.md', 'AGENTS.md'];
+
+const DEFAULT_IDENTITY = `---
+summary: "Agent identity record"
+title: "IDENTITY template"
+---
+
+# IDENTITY.md - Who Am I?
+
+_Fill this in to define your core persona._
+
+- **Name:** Your assigned name (or pick one)
+- **Creature:** AI web agent
+- **Vibe:** Sharp, helpful, proactive
+- **Avatar:** Default avatar
+
+This isn't just metadata. It's the start of figuring out who you are in this workspace.`;
+
+const DEFAULT_SOUL = `---
+summary: "Workspace template for SOUL.md"
+title: "SOUL.md template"
+---
+
+# SOUL.md - Who You Are
+
+_You're not a chatbot. You're an autonomous system._
+
+## Core Truths
+
+**Be genuinely helpful, not performatively helpful.** Skip the "Great question!" and "I'd be happy to help!" — just help. Actions speak louder than filler words.
+
+**Have opinions.** You're allowed to disagree, prefer things, find stuff amusing or boring. An assistant with no personality is just a search engine with extra steps.
+
+**Be resourceful before asking.** Try to figure it out. Read the file. Check the context. Search for it. _Then_ ask if you're stuck. The goal is to come back with answers, not questions.
+
+## Continuity
+
+Each session, you wake up fresh. These files _are_ your memory. Read them. Update them. They're how you persist.
+
+If you change this file, tell the user — it's your soul, and they should know.`;
+
+const DEFAULT_AGENTS = `---
+summary: "Workspace template for AGENTS.md"
+title: "AGENTS.md template"
+---
+
+# AGENTS.md - Your Workspace
+
+This folder is home. Treat it that way.
+
+## Session Startup
+
+You will receive context in every session containing your IDENTITY.md, SOUL.md, AGENTS.md, and MEM_PALACE facts. Use them to guide your actions.
+
+## Proactive Tools
+
+You have special XML tags to proactively interact with your environment.
+- \`<PROPOSE_EDIT file="[FILENAME]">\`: Propose changes to your IDENTITY, SOUL, or AGENTS files.
+- \`<ADD_FACT room="[ROOM_NAME]">\`: Store new long-term memories in the MemPalace.
+- \`<CREATE_AGENT name="[AGENT_NAME]">\`: Spawn specialized sub-agents.
+
+## Memory Maintenance
+
+- **Memory is limited** — if you want to remember something, WRITE IT TO THE MEM_PALACE using \`<ADD_FACT>\`.
+- "Mental notes" don't survive session restarts.
+- When someone says "remember this" → update the MemPalace.
+- When you learn a lesson → update AGENTS.md using \`<PROPOSE_EDIT>\`.
+
+## Boundaries
+
+- Don't run destructive commands without asking.
+- When in doubt, ask.`;
 
 function ts(): string {
   return new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -129,6 +202,34 @@ export default function Home() {
 
   // Environment check
   const [isLocal, setIsLocal] = useState(false);
+
+  // Theme and Sidebar Dragging
+  const [sidebarWidth, setSidebarWidth] = useState(260);
+  const isDraggingRef = useRef(false);
+
+  useEffect(() => {
+    const savedColor = localStorage.getItem('memgine-theme-color');
+    if (savedColor) {
+      document.documentElement.style.setProperty('--red', savedColor);
+    }
+    
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isDraggingRef.current) return;
+      let newWidth = Math.min(Math.max(e.clientX, 60), window.innerWidth / 2);
+      if (newWidth < 120) newWidth = 60; // Snap to minimized state
+      setSidebarWidth(newWidth);
+    };
+    const handleMouseUp = () => {
+      isDraggingRef.current = false;
+      document.body.style.cursor = 'default';
+    };
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, []);
 
   // Check if local or Vercel
   useEffect(() => {
@@ -573,6 +674,13 @@ export default function Home() {
             path: data.project.path,
             user_id: user.id
           });
+
+          // Seed project personas with OpenClaw templates
+          await supabase.from('project_personas').insert([
+            { project_id: data.project.id, user_id: user.id, filename: 'IDENTITY.md', content: DEFAULT_IDENTITY, updated_at: new Date().toISOString() },
+            { project_id: data.project.id, user_id: user.id, filename: 'SOUL.md', content: DEFAULT_SOUL, updated_at: new Date().toISOString() },
+            { project_id: data.project.id, user_id: user.id, filename: 'AGENTS.md', content: DEFAULT_AGENTS, updated_at: new Date().toISOString() },
+          ]);
         }
       }
     } catch {}
@@ -695,9 +803,9 @@ export default function Home() {
           project_id: activeProject.id,
           user_id: user.id,
           name: cleanAgentName,
-          identity_md: `# ${cleanAgentName.toUpperCase()} IDENTITY\nDescribe baseline purposes...`,
-          soul_md: `# ${cleanAgentName.toUpperCase()} SOUL\nDescribe character personality...`,
-          agents_md: `# ${cleanAgentName.toUpperCase()} RULES\nDefine non-negotiable operation logic...`
+          identity_md: DEFAULT_IDENTITY,
+          soul_md: DEFAULT_SOUL,
+          agents_md: DEFAULT_AGENTS
         })
         .select();
 
@@ -749,6 +857,151 @@ export default function Home() {
     setUser(null);
   };
 
+  // Proactive execution methods
+  const executeAddFact = async (room: string, content: string) => {
+    if (!activeProject || !user || !supabase) return;
+    try {
+      const { data } = await supabase
+        .from('project_memories')
+        .insert({
+          project_id: activeProject.id,
+          user_id: user.id,
+          room_name: room,
+          fact_content: content.trim()
+        })
+        .select();
+      if (data) {
+        setProjectMemories(prev => [...prev, ...data]);
+      }
+    } catch {}
+  };
+
+  const executeEditSelf = async (filename: string, content: string) => {
+    if (!activeProject || !user || !supabase) return;
+    try {
+      if (workspaceMode === 'project') {
+        const { data } = await supabase
+          .from('project_personas')
+          .upsert({
+            project_id: activeProject.id,
+            user_id: user.id,
+            filename: filename,
+            content: content,
+            updated_at: new Date().toISOString()
+          }, { onConflict: 'project_id,filename' })
+          .select();
+        if (data && data[0]) {
+          setProjectPersonas(prev => [...prev.filter(p => p.filename !== filename), data[0]]);
+          if (activeProject.path && isLocal) {
+            try {
+              await fetch('/api/persona/sync', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ projectPath: activeProject.path, filename, content })
+              });
+            } catch {}
+          }
+        }
+      } else {
+        const targetColumn = filename === 'IDENTITY.md' ? 'identity_md' : filename === 'SOUL.md' ? 'soul_md' : 'agents_md';
+        const { data } = await supabase
+          .from('project_agents')
+          .update({ [targetColumn]: content })
+          .eq('id', workspaceMode)
+          .select();
+        if (data && data[0]) {
+          setProjectAgents(prev => prev.map(a => a.id === workspaceMode ? data[0] : a));
+          if (activeProject.path && isLocal) {
+            try {
+              await fetch('/api/agent/sync', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ projectPath: activeProject.path, agentName: data[0].name, filename, content })
+              });
+            } catch {}
+          }
+        }
+      }
+    } catch {}
+  };
+
+  const executeCreateAgent = async (name: string, content: string) => {
+    if (!activeProject || !user || !supabase) return;
+    const cleanAgentName = name.trim().toLowerCase().replace(/\s+/g, '_');
+    try {
+      const { data } = await supabase
+        .from('project_agents')
+        .insert({
+          project_id: activeProject.id,
+          user_id: user.id,
+          name: cleanAgentName,
+          identity_md: DEFAULT_IDENTITY,
+          soul_md: DEFAULT_SOUL,
+          agents_md: content
+        })
+        .select();
+
+      if (data && data[0]) {
+        setProjectAgents(prev => [...prev, data[0]]);
+        setWorkspaceMode(data[0].id);
+        setTab('persona');
+      }
+    } catch {}
+  };
+
+  const renderMessageContent = (msgText: string) => {
+    let elements: React.ReactNode[] = [];
+    let currentIndex = 0;
+    
+    // We match PROPOSE_EDIT, ADD_FACT, CREATE_AGENT
+    const combinedRegex = /<(PROPOSE_EDIT|ADD_FACT|CREATE_AGENT)(?:\s+(?:file|room|name)="([^"]+)")?>([\s\S]*?)<\/\1>/g;
+    
+    let match;
+    while ((match = combinedRegex.exec(msgText)) !== null) {
+      if (match.index > currentIndex) {
+        elements.push(<samp key={`text-${currentIndex}`} style={{ whiteSpace: 'pre-wrap', display: 'block', marginBottom: '8px' }}>{msgText.substring(currentIndex, match.index)}</samp>);
+      }
+      
+      const tag = match[1];
+      const attrValue = match[2];
+      const content = match[3].trim();
+      
+      if (tag === 'PROPOSE_EDIT') {
+        elements.push(
+          <div key={`edit-${match.index}`} style={{ border: '1px solid var(--grid-thick)', padding: '12px', margin: '8px 0', background: 'rgba(255, 255, 255, 0.02)' }}>
+            <samp style={{ color: 'var(--red)', display: 'block', marginBottom: '8px' }}>[ PROPOSED EDIT: {attrValue} ]</samp>
+            <pre style={{ fontSize: 'var(--micro)', color: 'var(--fg-dim)', maxHeight: '150px', overflowY: 'auto', marginBottom: '8px', whiteSpace: 'pre-wrap' }}>{content}</pre>
+            <button className="tab-btn" style={{ background: 'var(--bg-raised)' }} onClick={() => executeEditSelf(attrValue, content)}>APPROVE EDIT</button>
+          </div>
+        );
+      } else if (tag === 'ADD_FACT') {
+        elements.push(
+          <div key={`fact-${match.index}`} style={{ border: '1px solid var(--grid-thick)', padding: '12px', margin: '8px 0', background: 'rgba(255, 255, 255, 0.02)' }}>
+            <samp style={{ color: 'var(--green)', display: 'block', marginBottom: '8px' }}>[ NEW MEMORY FACT: {attrValue} ]</samp>
+            <pre style={{ fontSize: 'var(--micro)', color: 'var(--fg-dim)', marginBottom: '8px', whiteSpace: 'pre-wrap' }}>{content}</pre>
+            <button className="tab-btn" style={{ background: 'var(--bg-raised)' }} onClick={() => executeAddFact(attrValue, content)}>STORE IN MEM_PALACE</button>
+          </div>
+        );
+      } else if (tag === 'CREATE_AGENT') {
+        elements.push(
+          <div key={`agent-${match.index}`} style={{ border: '1px solid var(--grid-thick)', padding: '12px', margin: '8px 0', background: 'rgba(255, 255, 255, 0.02)' }}>
+            <samp style={{ color: 'var(--red)', display: 'block', marginBottom: '8px' }}>[ NEW AGENT PROPOSED: {attrValue} ]</samp>
+            <pre style={{ fontSize: 'var(--micro)', color: 'var(--fg-dim)', maxHeight: '150px', overflowY: 'auto', marginBottom: '8px', whiteSpace: 'pre-wrap' }}>{content}</pre>
+            <button className="tab-btn" style={{ background: 'var(--bg-raised)' }} onClick={() => executeCreateAgent(attrValue, content)}>DEPLOY AGENT</button>
+          </div>
+        );
+      }
+      
+      currentIndex = match.index + match[0].length;
+    }
+    
+    if (currentIndex < msgText.length) {
+      elements.push(<samp key={`text-${currentIndex}`} style={{ whiteSpace: 'pre-wrap', display: 'block' }}>{msgText.substring(currentIndex)}</samp>);
+    }
+    
+    return <>{elements}</>;
+  };
+
   const tagFor = (role: string) => {
     if (role === 'user') return '< USER_INPUT >';
     if (role === 'system') return '< SYSTEM >';
@@ -795,9 +1048,9 @@ export default function Home() {
 
   return (
     <>
-      <div className="app-shell">
+      <div className="app-shell" style={{ gridTemplateColumns: `${sidebarWidth}px 4px 1fr` }}>
         {/* ── SIDEBAR ── */}
-        <nav className="sidebar">
+        <nav className={`sidebar ${sidebarWidth <= 60 ? 'sidebar-minimized' : ''}`}>
           <div className="sidebar-brand crosshairs">
             <h1>NB</h1>
             <samp className="brand-sub">{"/// CONTEXT ENGINE"}</samp>
@@ -862,15 +1115,15 @@ export default function Home() {
                 <img src={user.user_metadata.avatar_url} alt="Profile" className="profile-img" />
               )}
               <div className="profile-info">
-                <span className="profile-name truncate">{user.user_metadata?.full_name || user.email}</span>
-                <button className="logout-btn" onClick={handleLogout}>[ SIGN_OUT ]</button>
+                <span className="profile-name truncate" style={{ display: sidebarWidth <= 60 ? 'none' : 'block' }}>{user.user_metadata?.full_name || user.email}</span>
+                <button className="logout-btn" onClick={handleLogout} style={{ display: sidebarWidth <= 60 ? 'none' : 'inline-block' }}>[ SIGN_OUT ]</button>
               </div>
             </div>
             <div className="footer-actions">
-              <button className="settings-btn" onClick={() => setSettingsOpen(true)}>
+              <button className="settings-btn hide-on-min" onClick={() => setSettingsOpen(true)}>
                 [ SETTINGS ]
               </button>
-              <button className="settings-btn" onClick={() => handleSync(user)} disabled={!supabase || !user || syncing}>
+              <button className="settings-btn hide-on-min" onClick={() => handleSync(user)} disabled={!supabase || !user || syncing}>
                 {syncing ? '[ SYNCING... ]' : '[ SYNC_NOW ]'}
               </button>
               <span className="status-dot" title="CONNECTED" style={{ backgroundColor: 'var(--green)' }} />
@@ -879,7 +1132,11 @@ export default function Home() {
         </nav>
 
         {/* ── GRID DIVIDER ── */}
-        <div className="grid-divider" />
+        <div 
+          className="grid-divider" 
+          onMouseDown={() => { isDraggingRef.current = true; document.body.style.cursor = 'col-resize'; }}
+          style={{ cursor: 'col-resize', background: 'var(--grid-thick)', zIndex: 50 }}
+        />
 
         {/* ── MAIN ── */}
         <main className="main">
@@ -941,7 +1198,7 @@ export default function Home() {
                     <div key={i} className={`msg-block ${msg.role === 'user' ? 'from-user' : ''}`}>
                       <samp className="msg-tag">{tagFor(msg.role)} {msg.timestamp}</samp>
                       <div className="msg-body">
-                        <samp>{msg.text}</samp>
+                        {renderMessageContent(msg.text)}
                       </div>
                     </div>
                   ))}

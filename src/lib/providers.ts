@@ -32,6 +32,13 @@ const MODEL_PROVIDER_MAP: Record<string, string> = {
   'gemini-3.1-pro': 'google',
   'openrouter/auto': 'openrouter',
   'openrouter/free': 'openrouter',
+  'meta-llama/llama-3.3-70b-instruct:free': 'openrouter',
+  'meta-llama/llama-3.1-8b-instruct:free': 'openrouter',
+  'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free': 'openrouter',
+  'qwen/qwen3-coder:free': 'openrouter',
+  'qwen/qwen-2-7b-instruct:free': 'openrouter',
+  'mistralai/mistral-7b-instruct:free': 'openrouter',
+  'openchat/openchat-7b:free': 'openrouter',
 };
 
 // ── OpenRouter ──

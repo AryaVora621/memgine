@@ -11,7 +11,7 @@ export async function GET() {
 // POST — create a new project
 export async function POST(req: Request) {
   try {
-    const { name, path: projPath } = await req.json();
+    const { name, path: projPath, id } = await req.json();
 
     if (!name || !name.trim()) {
       return NextResponse.json({ error: 'Project name is required' }, { status: 400 });
@@ -21,11 +21,18 @@ export async function POST(req: Request) {
 
     // Check for duplicate name
     if (settings.projects.some(p => p.name.toLowerCase() === name.trim().toLowerCase())) {
-      return NextResponse.json({ error: 'Project with this name already exists' }, { status: 409 });
+      // If it exists, let's just return success with the existing project to prevent sync failures
+      const existing = settings.projects.find(p => p.name.toLowerCase() === name.trim().toLowerCase());
+      if (id && existing && existing.id !== id) {
+        // Update the local ID to match the DB ID if they differ
+        existing.id = id;
+        saveSettings(settings);
+      }
+      return NextResponse.json({ success: true, project: existing });
     }
 
     const newProject: ProjectEntry = {
-      id: uuidv4(),
+      id: id || uuidv4(),
       name: name.trim().toUpperCase().replace(/\s+/g, '-'),
       path: projPath || '',
       createdAt: new Date().toISOString(),

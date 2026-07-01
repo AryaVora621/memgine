@@ -75,6 +75,22 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
               />
             </div>
           ))}
+
+          <div className="field-row" style={{ marginTop: '12px' }}>
+            <label className="field-label">THEME COLOR</label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <input 
+                type="color" 
+                defaultValue={typeof document !== 'undefined' ? getComputedStyle(document.documentElement).getPropertyValue('--red').trim() || '#E61919' : '#E61919'}
+                onChange={(e) => {
+                  document.documentElement.style.setProperty('--red', e.target.value);
+                  localStorage.setItem('memgine-theme-color', e.target.value);
+                }} 
+                style={{ background: 'transparent', border: '1px solid var(--grid-thick)', cursor: 'pointer', height: '28px', padding: 0 }}
+              />
+              <samp style={{ fontSize: 'var(--micro)', color: 'var(--fg-dim)' }}>SELECT ACCENT</samp>
+            </div>
+          </div>
         </div>
 
         <hr className="modal-hr" />

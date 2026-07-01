@@ -158,10 +158,33 @@ export async function POST(req: Request) {
       });
     }
 
+    const proactiveCapabilities = `
+# SYSTEM CAPABILITIES (PROACTIVE SELF-IMPROVEMENT)
+You have the ability to proactively manage your own identity, rules, skills, and memory palace. 
+To propose a change to your configuration files (e.g., IDENTITY.md, SOUL.md, AGENTS.md), output the following in your response:
+<PROPOSE_EDIT file="[FILENAME]">
+[New markdown content for the file]
+</PROPOSE_EDIT>
+
+To proactively store a new fact in the Memory Palace to help you remember context for the long term, output:
+<ADD_FACT room="[ROOM_NAME]">
+[Fact content]
+</ADD_FACT>
+
+To define a new sub-agent that you can delegate to later, output:
+<CREATE_AGENT name="[AGENT_NAME]">
+[Agent description and rules]
+</CREATE_AGENT>
+`;
+
     const systemPrompt: ChatMessage = {
       role: 'system',
-      content: `You are an AI assistant for the project "${projectId}". You have access to the full conversation history for this project. Be helpful, precise, and remember prior context from this project's sessions.${openClawContext}${memoriesContext}`,
+      content: `You are an AI assistant for the project "${projectId}". You have access to the full conversation history for this project. Be helpful, precise, and remember prior context from this project's sessions.${openClawContext}${memoriesContext}${proactiveCapabilities}`,
     };
+
+    if (history.length === 0 || history[history.length - 1].content !== message) {
+      history.push({ role: 'user', content: message });
+    }
 
     const messagesForAI: ChatMessage[] = [systemPrompt, ...history];
 
