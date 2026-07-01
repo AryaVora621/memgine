@@ -82,7 +82,7 @@ export default function Home() {
 
   // Reconcile and Sync function
   const handleSync = useCallback(async (currentUser: any) => {
-    if (!currentUser) return;
+    if (!currentUser || !supabase) return;
     setSyncing(true);
     try {
       // 1. Fetch projects from local backend
@@ -188,8 +188,8 @@ export default function Home() {
     }
   }, []);
 
-  // Listen for Supabase Auth state changes
   useEffect(() => {
+    if (!supabase) return;
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null);
       if (session?.user) {
@@ -278,7 +278,7 @@ export default function Home() {
         setGraphRefresh(prev => prev + 1);
 
         // Upload both newly added messages to Supabase if logged in
-        if (user) {
+        if (user && supabase) {
           // Upload user message
           await supabase.from('memories').insert({
             id: data.userMessageId,
@@ -338,7 +338,7 @@ export default function Home() {
         setShowNewProject(false);
 
         // Create project in Supabase if logged in
-        if (user) {
+        if (user && supabase) {
           await supabase.from('projects').insert({
             id: data.project.id,
             name: data.project.name,
@@ -351,6 +351,7 @@ export default function Home() {
   };
 
   const handleLogin = async () => {
+    if (!supabase) return;
     await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
@@ -360,6 +361,7 @@ export default function Home() {
   };
 
   const handleLogout = async () => {
+    if (!supabase) return;
     await supabase.auth.signOut();
     setUser(null);
   };
@@ -423,7 +425,11 @@ export default function Home() {
           <hr />
 
           <footer className="sidebar-footer">
-            {user ? (
+            {!supabase ? (
+              <button className="login-btn" style={{ opacity: 0.5, cursor: 'not-allowed' }} disabled>
+                [ SYNC DISABLED ]
+              </button>
+            ) : user ? (
               <div className="auth-profile">
                 {user.user_metadata?.avatar_url && (
                   // eslint-disable-next-line @next/next/no-img-element
@@ -443,7 +449,7 @@ export default function Home() {
               <button className="settings-btn" onClick={() => setSettingsOpen(true)}>
                 [ SETTINGS ]
               </button>
-              <button className="settings-btn" onClick={() => handleSync(user)} disabled={!user || syncing}>
+              <button className="settings-btn" onClick={() => handleSync(user)} disabled={!supabase || !user || syncing}>
                 {syncing ? '[ SYNCING... ]' : '[ SYNC_NOW ]'}
               </button>
               <span className="status-dot" title={user ? "CONNECTED" : "LOCAL"} style={{ backgroundColor: user ? 'var(--green)' : 'var(--fg-dim)' }} />
