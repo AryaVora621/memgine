@@ -244,12 +244,25 @@ export default function Home() {
       return;
     }
 
+    const checkLocal = () => {
+      return window.location.hostname === 'localhost' || 
+             window.location.hostname === '127.0.0.1' || 
+             window.location.hostname.startsWith('192.168.');
+    };
+
     supabase.auth.getSession().then(({ data: { session } }) => {
+      if (checkLocal()) {
+        const localUser = { id: '00000000-0000-0000-0000-000000000000', email: 'local@dev.com', user_metadata: { full_name: 'Local Dev' } };
+        setUser(localUser);
+        setAuthLoading(false);
+        return;
+      }
       setUser(session?.user ?? null);
       setAuthLoading(false);
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (checkLocal()) return;
       setUser(session?.user ?? null);
       setAuthLoading(false);
     });
@@ -525,7 +538,7 @@ export default function Home() {
 
   // MemPalace facts CRUD
   const handleAddFact = async () => {
-    if (!newFact.trim() || !activeProject || !user || user.id === 'local-dev-user' || !supabase) return;
+    if (!newFact.trim() || !activeProject || !user || !supabase) return;
     try {
       const { data, error } = await supabase
         .from('project_memories')
@@ -558,7 +571,7 @@ export default function Home() {
 
   // OpenClaw unified persona save
   const handleSavePersona = async () => {
-    if (!activeProject || !user || user.id === 'local-dev-user' || !supabase || savingPersona) return;
+    if (!activeProject || !user || !supabase || savingPersona) return;
     setSavingPersona(true);
     try {
       if (workspaceMode === 'project') {
@@ -696,7 +709,7 @@ export default function Home() {
 
   // Proactive execution methods
   const executeAddFact = async (room: string, content: string) => {
-    if (!activeProject || !user || user.id === 'local-dev-user' || !supabase) return;
+    if (!activeProject || !user || !supabase) return;
     try {
       const { data } = await supabase
         .from('project_memories')
@@ -763,7 +776,7 @@ export default function Home() {
   };
 
   const executeCreateAgent = async (name: string, content: string) => {
-    if (!activeProject || !user || user.id === 'local-dev-user' || !supabase) return;
+    if (!activeProject || !user || !supabase) return;
     const cleanAgentName = name.trim().toLowerCase().replace(/\s+/g, '_');
     try {
       const { data } = await supabase
