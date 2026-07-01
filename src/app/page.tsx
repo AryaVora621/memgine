@@ -332,7 +332,21 @@ export default function Home() {
       return;
     }
 
+    const checkLocal = () => {
+      return window.location.hostname === 'localhost' || 
+             window.location.hostname === '127.0.0.1' || 
+             window.location.hostname.startsWith('192.168.');
+    };
+
     supabase.auth.getSession().then(({ data: { session } }) => {
+      if (checkLocal()) {
+        const localUser = { id: 'local-dev-user', email: 'local@dev.com', user_metadata: { full_name: 'Local Dev' } };
+        setUser(localUser);
+        setAuthLoading(false);
+        handleSync(localUser);
+        return;
+      }
+
       setUser(session?.user ?? null);
       setAuthLoading(false);
       if (session?.user) {
@@ -341,6 +355,8 @@ export default function Home() {
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (checkLocal()) return;
+      
       setUser(session?.user ?? null);
       setAuthLoading(false);
       if (session?.user) {
