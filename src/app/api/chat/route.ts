@@ -5,7 +5,7 @@ import { callProvider, type ChatMessage } from '@/lib/providers';
 
 export async function POST(req: Request) {
   try {
-    const { projectId, message, model, projectMemories } = await req.json();
+    const { projectId, message, model, projectMemories, projectPersonas } = await req.json();
 
     if (!projectId || !message) {
       return NextResponse.json({ error: 'projectId and message are required' }, { status: 400 });
@@ -45,29 +45,58 @@ export async function POST(req: Request) {
       memoriesContext += `</MEMORY_PALACE_CONTEXT>`;
     }
 
-    // Add system prompt with project context and MemPalace memories
-    let customInstructions = '';
+    // Build OpenClaw unified identity context (local override + cloud fallback)
+    const activePersonas: Record<string, string> = {};
+    
+    // 1. Populate with cloud synced personas first
+    if (projectPersonas && Array.isArray(projectPersonas)) {
+      projectPersonas.forEach((p: any) => {
+        activePersonas[p.filename] = p.content;
+      });
+    }
+
+    // 2. Override with local files if running locally
     const proj = settings.projects.find(p => p.id === projectId);
     if (proj && proj.path && process.env.VERCEL !== '1') {
       const fs = require('fs');
       const path = require('path');
+      const targetFiles = ['IDENTITY.md', 'SOUL.md', 'AGENTS.md'];
+      
+      targetFiles.forEach(file => {
+        const filePath = path.join(proj.path, file);
+        if (fs.existsSync(filePath)) {
+          try {
+            activePersonas[file] = fs.readFileSync(filePath, 'utf-8');
+          } catch {}
+        }
+      });
+
+      // Also support custom fallback workspace instructions (.memgineprompt, etc.)
       const promptFiles = ['.memgineprompt', '.claudeprompt', '.cursorrules', 'instructions.md'];
       for (const file of promptFiles) {
         const filePath = path.join(proj.path, file);
         if (fs.existsSync(filePath)) {
           try {
-            customInstructions = `\n\n<PROJECT_INSTRUCTIONS>\n${fs.readFileSync(filePath, 'utf-8')}\n</PROJECT_INSTRUCTIONS>`;
-            break; // Use the first matched instruction file
-          } catch (e) {
-            console.error(`Failed to read instruction file ${filePath}:`, e);
-          }
+            activePersonas['WORKSPACE_INSTRUCTIONS.md'] = fs.readFileSync(filePath, 'utf-8');
+            break;
+          } catch {}
         }
       }
     }
 
+    // 3. Compose the prompt in OpenClaw Markdown format
+    let openClawContext = '';
+    const fileOrder = ['IDENTITY.md', 'SOUL.md', 'AGENTS.md', 'WORKSPACE_INSTRUCTIONS.md'];
+    fileOrder.forEach(filename => {
+      const content = activePersonas[filename];
+      if (content && content.trim()) {
+        openClawContext += `\n\n# ${filename.replace('.md', '').toUpperCase()}\n${content}\n`;
+      }
+    });
+
     const systemPrompt: ChatMessage = {
       role: 'system',
-      content: `You are an AI assistant for the project "${projectId}". You have access to the full conversation history for this project. Be helpful, precise, and remember prior context from this project's sessions.${customInstructions}${memoriesContext}`,
+      content: `You are an AI assistant for the project "${projectId}". You have access to the full conversation history for this project. Be helpful, precise, and remember prior context from this project's sessions.${openClawContext}${memoriesContext}`,
     };
 
     const messagesForAI: ChatMessage[] = [systemPrompt, ...history];

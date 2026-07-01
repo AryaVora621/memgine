@@ -26,6 +26,14 @@ interface ProjectMemory {
   created_at: string;
 }
 
+interface ProjectPersona {
+  id: string;
+  project_id: string;
+  filename: 'IDENTITY.md' | 'SOUL.md' | 'AGENTS.md';
+  content: string;
+  updated_at: string;
+}
+
 const MODELS = [
   { id: 'claude-sonnet-4-20250514', label: 'CLAUDE SONNET 4' },
   { id: 'claude-4-opus', label: 'CLAUDE 4 OPUS' },
@@ -38,13 +46,14 @@ const MODELS = [
 ];
 
 const ROOMS = ['GENERAL', 'DATABASE', 'FRONTEND', 'APIS', 'ARCHITECTURE'];
+const PERSONA_FILES: Array<'IDENTITY.md' | 'SOUL.md' | 'AGENTS.md'> = ['IDENTITY.md', 'SOUL.md', 'AGENTS.md'];
 
 function ts(): string {
   return new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
 export default function Home() {
-  const [tab, setTab] = useState<'chat' | 'graph' | 'palace'>('chat');
+  const [tab, setTab] = useState<'chat' | 'graph' | 'palace' | 'persona'>('chat');
   const [message, setMessage] = useState('');
   const [model, setModel] = useState(MODELS[0].id);
   const [loading, setLoading] = useState(false);
@@ -67,6 +76,12 @@ export default function Home() {
   const [projectMemories, setProjectMemories] = useState<ProjectMemory[]>([]);
   const [activeRoom, setActiveRoom] = useState(ROOMS[0]);
   const [newFact, setNewFact] = useState('');
+
+  // OpenClaw unified markdown files
+  const [projectPersonas, setProjectPersonas] = useState<ProjectPersona[]>([]);
+  const [selectedPersonaFile, setSelectedPersonaFile] = useState<'IDENTITY.md' | 'SOUL.md' | 'AGENTS.md'>('IDENTITY.md');
+  const [personaContent, setPersonaContent] = useState('');
+  const [savingPersona, setSavingPersona] = useState(false);
 
   // Messages keyed by project id
   const [messagesByProject, setMessagesByProject] = useState<Record<string, Message[]>>({});
@@ -205,6 +220,32 @@ export default function Home() {
             });
           } catch {}
         }
+
+        // 4. Sync Personas (Markdown files)
+        const { data: dbPersonas } = await supabase
+          .from('project_personas')
+          .select('*')
+          .eq('project_id', proj.id);
+
+        if (dbPersonas && proj.path && typeof window !== 'undefined') {
+          const localIsDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+          if (localIsDev) {
+            // Write Supabase files to local directory
+            for (const persona of dbPersonas) {
+              try {
+                await fetch('/api/persona/sync', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    projectPath: proj.path,
+                    filename: persona.filename,
+                    content: persona.content
+                  })
+                });
+              } catch {}
+            }
+          }
+        }
       }
 
       setGraphRefresh(prev => prev + 1);
@@ -261,10 +302,29 @@ export default function Home() {
       .from('project_memories')
       .select('*')
       .eq('project_id', activeProject.id)
-      .then(({ data, error }) => {
+      .then(({ data }) => {
         if (data) setProjectMemories(data);
       });
   }, [activeProject?.id, user]);
+
+  // Fetch OpenClaw personas from Supabase
+  useEffect(() => {
+    if (!activeProject || !user || !supabase) return;
+    supabase
+      .from('project_personas')
+      .select('*')
+      .eq('project_id', activeProject.id)
+      .then(({ data }) => {
+        if (data) {
+          setProjectPersonas(data);
+          const found = data.find(p => p.filename === selectedPersonaFile);
+          setPersonaContent(found?.content || '');
+        } else {
+          setProjectPersonas([]);
+          setPersonaContent('');
+        }
+      });
+  }, [activeProject?.id, user, selectedPersonaFile]);
 
   // Auto-scroll chat
   useEffect(() => {
@@ -310,7 +370,8 @@ export default function Home() {
           projectId: activeProject.id,
           message: message,
           model,
-          projectMemories: projectMemories // Send structured MemPalace facts
+          projectMemories: projectMemories, // Send structured MemPalace facts
+          projectPersonas: projectPersonas   // Send OpenClaw unified markdown personas
         }),
       });
 
@@ -429,6 +490,48 @@ export default function Home() {
         setProjectMemories(prev => prev.filter(f => f.id !== factId));
       }
     } catch (e) {}
+  };
+
+  // OpenClaw persona save
+  const handleSavePersona = async () => {
+    if (!activeProject || !user || !supabase || savingPersona) return;
+    setSavingPersona(true);
+    try {
+      const { data, error } = await supabase
+        .from('project_personas')
+        .upsert({
+          project_id: activeProject.id,
+          user_id: user.id,
+          filename: selectedPersonaFile,
+          content: personaContent,
+          updated_at: new Date().toISOString()
+        }, { onConflict: 'project_id,filename' })
+        .select();
+
+      if (data && data[0]) {
+        // Update local list state
+        setProjectPersonas(prev => {
+          const filtered = prev.filter(p => p.filename !== selectedPersonaFile);
+          return [...filtered, data[0]];
+        });
+
+        // If local path is set, sync locally
+        if (activeProject.path && isLocal) {
+          try {
+            await fetch('/api/persona/sync', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                projectPath: activeProject.path,
+                filename: selectedPersonaFile,
+                content: personaContent
+              })
+            });
+          } catch {}
+        }
+      }
+    } catch (e) {}
+    setSavingPersona(false);
   };
 
   const handleLogin = async () => {
@@ -605,6 +708,9 @@ export default function Home() {
               <button className={`tab-btn ${tab === 'palace' ? 'active' : ''}`} onClick={() => setTab('palace')}>
                 [ MEM_PALACE ]
               </button>
+              <button className={`tab-btn ${tab === 'persona' ? 'active' : ''}`} onClick={() => setTab('persona')}>
+                [ PERSONA ]
+              </button>
             </div>
           </header>
 
@@ -694,7 +800,7 @@ export default function Home() {
                 </div>
               </div>
             </>
-          ) : (
+          ) : tab === 'palace' ? (
             /* MemPalace structured facts workspace */
             <div className="palace-container">
               <div className="palace-rooms">
@@ -739,6 +845,56 @@ export default function Home() {
                   />
                   <button className="add-fact-btn" onClick={handleAddFact}>
                     [ PERSIST ]
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            /* OpenClaw Markdown Persona workspace */
+            <div className="palace-container">
+              <div className="palace-rooms">
+                <samp className="section-label">[ OPENCLAW WORKSPACE ]</samp>
+                {PERSONA_FILES.map(file => (
+                  <button
+                    key={file}
+                    className={`room-btn ${file === selectedPersonaFile ? 'active' : ''}`}
+                    onClick={() => setSelectedPersonaFile(file)}
+                  >
+                    {file}
+                  </button>
+                ))}
+              </div>
+
+              <div className="room-content">
+                <samp className="section-label">[ EDITING WORKSPACE FILE: {selectedPersonaFile} ]</samp>
+                
+                <textarea
+                  className="compose-input"
+                  style={{
+                    border: '1px solid var(--grid-thick)',
+                    flex: 1,
+                    width: '100%',
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: '12px',
+                    textTransform: 'none',
+                    background: 'rgba(255, 255, 255, 0.01)',
+                    lineHeight: '1.6',
+                    padding: '16px'
+                  }}
+                  rows={20}
+                  value={personaContent}
+                  onChange={e => setPersonaContent(e.target.value)}
+                  placeholder={`Write your OpenClaw markdown system context for ${selectedPersonaFile} here...`}
+                  spellCheck={false}
+                />
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '12px' }}>
+                  <button
+                    className="add-fact-btn"
+                    onClick={handleSavePersona}
+                    disabled={savingPersona}
+                  >
+                    {savingPersona ? '[ SAVING... ]' : '[ SAVE WORKSPACE FILE ]'}
                   </button>
                 </div>
               </div>
