@@ -153,12 +153,14 @@ export default function Home() {
   const [authLoading, setAuthLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
 
-  // Projects
+  // Projects & Chats
   const [projects, setProjects] = useState<Project[]>([]);
   const [activeProjectIdx, setActiveProjectIdx] = useState(-1);
   const [newProjectName, setNewProjectName] = useState('');
-  const [newProjectPath, setNewProjectPath] = useState('');
   const [showNewProject, setShowNewProject] = useState(false);
+
+  const [chats, setChats] = useState<any[]>([]);
+  const [activeChatId, setActiveChatId] = useState<string | null>(null);
 
   // MemPalace structured facts
   const [projectMemories, setProjectMemories] = useState<ProjectMemory[]>([]);
@@ -178,13 +180,13 @@ export default function Home() {
   const [newAgentName, setNewAgentName] = useState('');
   const [showNewAgent, setShowNewAgent] = useState(false);
 
-  // Messages keyed by project id
-  const [messagesByProject, setMessagesByProject] = useState<Record<string, Message[]>>({});
+  // Messages keyed by chat id
+  const [messagesByChat, setMessagesByChat] = useState<Record<string, Message[]>>({});
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const activeProject = activeProjectIdx >= 0 ? projects[activeProjectIdx] : null;
-  const currentMessages = activeProject ? (messagesByProject[activeProject.id] || []) : [];
+  const currentMessages = activeChatId ? (messagesByChat[activeChatId] || []) : [];
 
   // Environment check
   const [isLocal, setIsLocal] = useState(false);
@@ -235,183 +237,6 @@ export default function Home() {
     return true;
   });
 
-  // Reconcile and Sync function
-  const handleSync = useCallback(async (currentUser: any) => {
-    if (!currentUser || currentUser.id === 'local-dev-user' || !supabase) return;
-    setSyncing(true);
-    try {
-      // 1. Fetch projects from local backend
-      const localProjects: Project[] = [];
-      try {
-        const localRes = await fetch('/api/projects');
-        const localData = await localRes.json();
-        if (localData.projects) localProjects.push(...localData.projects);
-      } catch {}
-
-      // 2. Fetch projects from Supabase
-      const { data: dbProjects, error: dbProjErr } = await supabase
-        .from('projects')
-        .select('*');
-
-      if (dbProjErr) throw dbProjErr;
-
-      // Sync local projects to Supabase (Upload)
-      for (const localProj of localProjects) {
-        const exists = dbProjects?.some(p => p.id === localProj.id);
-        if (!exists) {
-          await supabase
-            .from('projects')
-            .insert({
-              id: localProj.id,
-              name: localProj.name,
-              path: localProj.path,
-              user_id: currentUser.id
-            });
-        }
-      }
-
-      // Sync Supabase projects to local (Download)
-      const { data: updatedDbProjects } = await supabase
-        .from('projects')
-        .select('*');
-
-      let localUpdatedList = [...localProjects];
-      for (const dbProj of updatedDbProjects || []) {
-        const exists = localProjects.some(p => p.id === dbProj.id);
-        if (!exists) {
-          try {
-            const res = await fetch('/api/projects', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ name: dbProj.name, path: dbProj.path, id: dbProj.id }),
-            });
-            const data = await res.json();
-            if (data.success && data.project) {
-              localUpdatedList.push(data.project);
-            }
-          } catch {}
-        }
-      }
-      setProjects(localUpdatedList);
-
-      // 3. For each project, sync memories and agents
-      for (const proj of localUpdatedList) {
-        let localMemories: any[] = [];
-        try {
-          const memRes = await fetch(`/api/memory?projectId=${proj.id}`);
-          const memData = await memRes.json();
-          if (memData.nodes) localMemories = memData.nodes;
-        } catch {}
-
-        const { data: dbMemories, error: dbMemErr } = await supabase
-          .from('memories')
-          .select('*')
-          .eq('project_id', proj.id);
-
-        if (dbMemErr) throw dbMemErr;
-
-        // Sync local memories to Supabase (Upload)
-        for (const localMem of localMemories) {
-          const exists = dbMemories?.some(m => m.id === localMem.id);
-          if (!exists) {
-            await supabase
-              .from('memories')
-              .insert({
-                id: localMem.id,
-                project_id: proj.id,
-                user_id: currentUser.id,
-                content: localMem.fullContent,
-                role: localMem.role,
-                metadata: {},
-                parent_id: localMem.parent_id || null,
-                timestamp: localMem.timestamp
-              });
-          }
-        }
-
-        // Sync Supabase memories to local SQLite (Download)
-        const missingLocally = dbMemories?.filter(dbMem => !localMemories.some((lm: any) => lm.id === dbMem.id)) || [];
-        if (missingLocally.length > 0) {
-          try {
-            await fetch('/api/memory/sync', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                projectId: proj.id,
-                memories: missingLocally
-              })
-            });
-          } catch {}
-        }
-
-        // 4. Sync Personas (Markdown files)
-        const { data: dbPersonas } = await supabase
-          .from('project_personas')
-          .select('*')
-          .eq('project_id', proj.id);
-
-        if (dbPersonas && proj.path && typeof window !== 'undefined') {
-          const localIsDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-          if (localIsDev) {
-            // Write Supabase files to local directory
-            for (const persona of dbPersonas) {
-              try {
-                await fetch('/api/persona/sync', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    projectPath: proj.path,
-                    filename: persona.filename,
-                    content: persona.content
-                  })
-                });
-              } catch {}
-            }
-          }
-        }
-
-        // 5. Sync Agents (Multi-Agent configuration directories)
-        const { data: dbAgents } = await supabase
-          .from('project_agents')
-          .select('*')
-          .eq('project_id', proj.id);
-
-        if (dbAgents && proj.path && typeof window !== 'undefined') {
-          const localIsDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-          if (localIsDev) {
-            for (const ag of dbAgents) {
-              const files = [
-                { name: 'IDENTITY.md', content: ag.identity_md },
-                { name: 'SOUL.md', content: ag.soul_md },
-                { name: 'AGENTS.md', content: ag.agents_md }
-              ];
-              for (const f of files) {
-                try {
-                  await fetch('/api/agent/sync', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                      projectPath: proj.path,
-                      agentName: ag.name,
-                      filename: f.name,
-                      content: f.content
-                    })
-                  });
-                } catch {}
-              }
-            }
-          }
-        }
-      }
-
-      setGraphRefresh(prev => prev + 1);
-    } catch (error) {
-      console.error('Sync error:', error);
-    } finally {
-      setSyncing(false);
-    }
-  }, []);
-
   // Listen for Supabase Auth state changes
   useEffect(() => {
     if (!supabase) {
@@ -419,53 +244,78 @@ export default function Home() {
       return;
     }
 
-    const checkLocal = () => {
-      return window.location.hostname === 'localhost' || 
-             window.location.hostname === '127.0.0.1' || 
-             window.location.hostname.startsWith('192.168.');
-    };
-
     supabase.auth.getSession().then(({ data: { session } }) => {
-      if (checkLocal()) {
-        const localUser = { id: 'local-dev-user', email: 'local@dev.com', user_metadata: { full_name: 'Local Dev' } };
-        setUser(localUser);
-        setAuthLoading(false);
-        handleSync(localUser);
-        return;
-      }
-
       setUser(session?.user ?? null);
       setAuthLoading(false);
-      if (session?.user) {
-        handleSync(session.user);
-      }
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (checkLocal()) return;
-      
       setUser(session?.user ?? null);
       setAuthLoading(false);
-      if (session?.user) {
-        handleSync(session.user);
-      }
     });
 
     return () => subscription.unsubscribe();
-  }, [handleSync]);
-
-  // Load local projects on mount
-  useEffect(() => {
-    fetch('/api/projects')
-      .then(r => r.json())
-      .then(data => {
-        if (data.projects && data.projects.length > 0) {
-          setProjects(data.projects);
-          setActiveProjectIdx(0);
-        }
-      })
-      .catch(() => {});
   }, []);
+
+  // Fetch projects from Supabase
+  useEffect(() => {
+    if (!user || !supabase) return;
+    supabase
+      .from('projects')
+      .select('*')
+      .order('created_at', { ascending: true })
+      .then(({ data }) => {
+        if (data && data.length > 0) {
+          setProjects(data);
+          setActiveProjectIdx(0);
+        } else {
+          setProjects([]);
+          setActiveProjectIdx(-1);
+        }
+      });
+  }, [user]);
+
+  // Fetch chats for the active project
+  useEffect(() => {
+    if (!activeProject || !user || !supabase) return;
+    supabase
+      .from('chats')
+      .select('*')
+      .eq('project_id', activeProject.id)
+      .order('created_at', { ascending: true })
+      .then(({ data }) => {
+        if (data && data.length > 0) {
+          setChats(data);
+          setActiveChatId(data[0].id);
+        } else {
+          setChats([]);
+          setActiveChatId(null);
+        }
+      });
+  }, [activeProject?.id, user]);
+
+  // Fetch memories for the active chat
+  useEffect(() => {
+    if (!activeChatId || !supabase) return;
+    supabase
+      .from('memories')
+      .select('*')
+      .eq('chat_id', activeChatId)
+      .order('timestamp', { ascending: true })
+      .then(({ data }) => {
+        if (data) {
+          const loadedMsgs = data.map(m => ({
+            role: m.role,
+            text: m.content,
+            timestamp: m.timestamp
+          }));
+          setMessagesByChat(prev => ({
+            ...prev,
+            [activeChatId]: loadedMsgs
+          }));
+        }
+      });
+  }, [activeChatId]);
 
   // Fetch structured facts (MemPalace) from Supabase
   useEffect(() => {
@@ -529,32 +379,33 @@ export default function Home() {
     }
   }, [currentMessages]);
 
-  // Init system message when switching projects
+  // Init system message when switching chats
   useEffect(() => {
-    if (!activeProject) return;
-    if (!messagesByProject[activeProject.id]) {
-      setMessagesByProject(prev => ({
+    if (!activeProject || !activeChatId) return;
+    if (!messagesByChat[activeChatId]) {
+      setMessagesByChat(prev => ({
         ...prev,
-        [activeProject.id]: [
+        [activeChatId]: [
           { role: 'system', text: `[ SYS_INIT ] CONTEXT ENGINE LOADED FOR PROJECT: ${activeProject.name}`, timestamp: ts() },
         ],
       }));
     }
     setGraphRefresh(prev => prev + 1);
-  }, [activeProject?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeProject?.id, activeChatId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const addMessage = useCallback((projectId: string, msg: Message) => {
-    setMessagesByProject(prev => ({
+  const addMessage = useCallback((chatId: string, msg: Message) => {
+    setMessagesByChat(prev => ({
       ...prev,
-      [projectId]: [...(prev[projectId] || []), msg],
+      [chatId]: [...(prev[chatId] || []), msg],
     }));
   }, []);
 
   const handleSend = async () => {
-    if (!message.trim() || !activeProject || loading) return;
+    if (!message.trim() || !activeProject || !activeChatId || loading) return;
 
-    const userMsg: Message = { role: 'user', text: message, timestamp: ts() };
-    addMessage(activeProject.id, userMsg);
+    const userMsgText = message;
+    const userMsg: Message = { role: 'user', text: userMsgText, timestamp: ts() };
+    addMessage(activeChatId, userMsg);
     setMessage('');
     setLoading(true);
 
@@ -572,10 +423,12 @@ export default function Home() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           projectId: activeProject.id,
-          message: message,
+          chatId: activeChatId,
+          message: userMsgText,
+          history: currentMessages, // Send previous messages from client state
           model,
-          projectMemories: projectMemories, // Send structured MemPalace facts
-          projectPersonas: projectPersonas,   // Send OpenClaw unified markdown personas
+          projectMemories: projectMemories, 
+          projectPersonas: projectPersonas,   
           agentName: selectedAgent ? selectedAgent.name : 'GENERAL_HELPER',
           agentPersonas: agentDetails
         }),
@@ -584,7 +437,7 @@ export default function Home() {
       const data = await res.json();
 
       if (data.success) {
-        addMessage(activeProject.id, {
+        addMessage(activeChatId, {
           role: 'assistant',
           text: data.response,
           timestamp: ts(),
@@ -592,43 +445,44 @@ export default function Home() {
         setGraphRefresh(prev => prev + 1);
 
         // Upload both newly added messages to Supabase if logged in
-        if (user && user.id !== 'local-dev-user' && supabase) {
+        if (user && supabase) {
           // Upload user message
-          await supabase.from('memories').insert({
-            id: data.userMessageId,
+          const { data: userDbMsg } = await supabase.from('memories').insert({
             project_id: activeProject.id,
+            chat_id: activeChatId,
             user_id: user.id,
-            content: userMsg.text,
+            content: userMsgText,
             role: 'user',
             metadata: {},
             parent_id: null,
             timestamp: new Date().toISOString()
-          });
+          }).select('id').single();
 
           // Upload assistant message
-          await supabase.from('memories').insert({
-            id: data.assistantMessageId,
-            project_id: activeProject.id,
-            user_id: user.id,
-            content: data.response,
-            role: 'assistant',
-            metadata: { model },
-            parent_id: data.userMessageId,
-            timestamp: new Date().toISOString()
-          });
+          if (userDbMsg) {
+            await supabase.from('memories').insert({
+              project_id: activeProject.id,
+              chat_id: activeChatId,
+              user_id: user.id,
+              content: data.response,
+              role: 'assistant',
+              metadata: { model, agentName: data.agentName },
+              parent_id: userDbMsg.id,
+              timestamp: new Date().toISOString()
+            });
+          }
         }
-
       } else {
-        addMessage(activeProject.id, {
+        addMessage(activeChatId, {
           role: 'system',
           text: `[ ERROR ] ${data.error}`,
           timestamp: ts(),
         });
       }
     } catch (e: any) {
-      addMessage(activeProject.id, {
+      addMessage(activeChatId, {
         role: 'system',
-        text: `[ NETWORK_ERROR ] ${e.message}`,
+        text: `[ FATAL ] Failed to reach context engine. (${e.message})`,
         timestamp: ts(),
       });
     }
@@ -637,39 +491,36 @@ export default function Home() {
   };
 
   const handleCreateProject = async () => {
-    if (!newProjectName.trim()) return;
+    if (!newProjectName.trim() || !user || !supabase) return;
     try {
-      const res = await fetch('/api/projects', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newProjectName, path: newProjectPath }),
-      });
-      const data = await res.json();
-      if (data.success && data.project) {
-        setProjects(prev => [...prev, data.project]);
+      const { data, error } = await supabase.from('projects').insert({
+        name: newProjectName.trim(),
+        user_id: user.id
+      }).select().single();
+
+      if (data) {
+        setProjects(prev => [...prev, data]);
         setActiveProjectIdx(projects.length);
         setNewProjectName('');
-        setNewProjectPath('');
         setShowNewProject(false);
 
-        // Create project in Supabase if logged in
-        if (user && user.id !== 'local-dev-user' && supabase) {
-          await supabase.from('projects').insert({
-            id: data.project.id,
-            name: data.project.name,
-            path: data.project.path,
-            user_id: user.id
-          });
-
-          // Seed project personas with OpenClaw templates
-          await supabase.from('project_personas').insert([
-            { project_id: data.project.id, user_id: user.id, filename: 'IDENTITY.md', content: DEFAULT_IDENTITY, updated_at: new Date().toISOString() },
-            { project_id: data.project.id, user_id: user.id, filename: 'SOUL.md', content: DEFAULT_SOUL, updated_at: new Date().toISOString() },
-            { project_id: data.project.id, user_id: user.id, filename: 'AGENTS.md', content: DEFAULT_AGENTS, updated_at: new Date().toISOString() },
-          ]);
-        }
+        // Seed project personas with OpenClaw templates
+        await supabase.from('project_personas').insert([
+          { project_id: data.id, user_id: user.id, filename: 'IDENTITY.md', content: DEFAULT_IDENTITY, updated_at: new Date().toISOString() },
+          { project_id: data.id, user_id: user.id, filename: 'SOUL.md', content: DEFAULT_SOUL, updated_at: new Date().toISOString() },
+          { project_id: data.id, user_id: user.id, filename: 'AGENTS.md', content: DEFAULT_AGENTS, updated_at: new Date().toISOString() },
+        ]);
+        
+        // Also create a default "Legacy Chat" for the new project
+        await supabase.from('chats').insert({
+          project_id: data.id,
+          user_id: user.id,
+          name: 'Main Chat'
+        });
       }
-    } catch {}
+    } catch (e) {
+      console.error('Create project failed:', e);
+    }
   };
 
   // MemPalace facts CRUD
@@ -1062,6 +913,62 @@ export default function Home() {
                       <span className="dir-index">[{String(i + 1).padStart(2, '0')}]</span>
                     </div>
                   </button>
+                  {i === activeProjectIdx && (
+                    <ul style={{ listStyle: 'none', paddingLeft: '24px', margin: '4px 0', width: '100%' }}>
+                      {chats.map(chat => (
+                        <li key={chat.id}>
+                          <button
+                            onClick={() => setActiveChatId(chat.id)}
+                            style={{
+                              width: '100%',
+                              textAlign: 'left',
+                              padding: '4px 8px',
+                              background: 'transparent',
+                              border: 'none',
+                              color: activeChatId === chat.id ? 'var(--red)' : 'var(--fg)',
+                              cursor: 'pointer',
+                              fontFamily: 'monospace',
+                              fontSize: '12px',
+                              opacity: activeChatId === chat.id ? 1 : 0.7
+                            }}
+                          >
+                            {activeChatId === chat.id ? '> ' : '  '}{chat.name}
+                          </button>
+                        </li>
+                      ))}
+                      <li>
+                        <button
+                          onClick={async () => {
+                            const name = prompt('Enter chat name:');
+                            if (name && user && supabase) {
+                              const { data } = await supabase.from('chats').insert({
+                                project_id: proj.id,
+                                user_id: user.id,
+                                name
+                              }).select().single();
+                              if (data) {
+                                setChats(prev => [...prev, data]);
+                                setActiveChatId(data.id);
+                              }
+                            }
+                          }}
+                          style={{
+                            width: '100%',
+                            textAlign: 'left',
+                            padding: '4px 8px',
+                            background: 'transparent',
+                            border: 'none',
+                            color: 'var(--fg-dim)',
+                            cursor: 'pointer',
+                            fontFamily: 'monospace',
+                            fontSize: '12px',
+                          }}
+                        >
+                          + NEW CHAT
+                        </button>
+                      </li>
+                    </ul>
+                  )}
                 </li>
               ))}
             </ul>
@@ -1106,10 +1013,12 @@ export default function Home() {
               <button className="settings-btn hide-on-min" onClick={() => setSettingsOpen(true)}>
                 [ SETTINGS ]
               </button>
-              <button className="settings-btn hide-on-min" onClick={() => handleSync(user)} disabled={!supabase || !user || syncing}>
-                {syncing ? '[ SYNCING... ]' : '[ SYNC_NOW ]'}
-              </button>
-              <span className="status-dot" title="CONNECTED" style={{ backgroundColor: 'var(--green)' }} />
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <div className="status-dot" title="CONNECTED" style={{ backgroundColor: 'var(--green)' }} />
+                  <span className="hide-on-min" style={{ fontSize: '10px', color: 'var(--green)' }}>SUPABASE_LIVE</span>
+                </div>
+              </div>
             </div>
           </footer>
         </nav>

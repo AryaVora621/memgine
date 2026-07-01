@@ -1,30 +1,25 @@
 import { NextResponse } from 'next/server';
-import { getMemoryStore } from '@/lib/memoryStore';
 import { loadSettings } from '@/lib/settings';
 import { callProvider, type ChatMessage } from '@/lib/providers';
 
 export async function POST(req: Request) {
   try {
-    const { projectId, message, model, projectMemories, projectPersonas, agentName, agentPersonas } = await req.json();
+    const { 
+      projectId, 
+      message, 
+      history = [], 
+      model, 
+      projectMemories, 
+      projectPersonas, 
+      agentName, 
+      agentPersonas 
+    } = await req.json();
 
     if (!projectId || !message) {
       return NextResponse.json({ error: 'projectId and message are required' }, { status: 400 });
     }
 
     const settings = loadSettings();
-    const memory = getMemoryStore(projectId);
-
-    // Save user message to memory verbatim (MemPalace pattern)
-    const userMemId = memory.addMemory(projectId, message, 'user');
-
-    // Build conversation history from memory for context
-    const recentMemories = memory.getMemories(projectId, 30);
-    const history: ChatMessage[] = recentMemories
-      .reverse() // oldest first
-      .map(m => ({
-        role: m.role as 'user' | 'assistant' | 'system',
-        content: m.content,
-      }));
 
     // Format MemPalace structured memories context
     let memoriesContext = '';
@@ -45,15 +40,15 @@ export async function POST(req: Request) {
       memoriesContext += `</MEMORY_PALACE_CONTEXT>`;
     }
 
-    // Detect if this is a new chat session or if the agent changed mid-session
-    const isNewSession = recentMemories.length <= 2; // only includes current turn
+    // Detect if agent changed mid-session based on history metadata
+    const isNewSession = history.length === 0;
     let agentSwitched = false;
-    const lastAssistantMem = recentMemories.find(m => m.role === 'assistant');
+    const lastAssistantMem = [...history].reverse().find(m => m.role === 'assistant');
     const currentAgentName = agentName || 'GENERAL_HELPER';
     
-    if (lastAssistantMem) {
+    if (lastAssistantMem && lastAssistantMem.metadata) {
       try {
-        const meta = JSON.parse(lastAssistantMem.metadata);
+        const meta = typeof lastAssistantMem.metadata === 'string' ? JSON.parse(lastAssistantMem.metadata) : lastAssistantMem.metadata;
         const lastAgentName = meta.agentName || 'GENERAL_HELPER';
         if (lastAgentName !== currentAgentName) {
           agentSwitched = true;
@@ -61,46 +56,15 @@ export async function POST(req: Request) {
       } catch {}
     }
 
-    // Build OpenClaw unified identity context (local override + cloud fallback)
+    // Build OpenClaw unified identity context from Supabase Personas
     const activePersonas: Record<string, string> = {};
-    
-    // 1. Populate with cloud synced personas first
     if (projectPersonas && Array.isArray(projectPersonas)) {
       projectPersonas.forEach((p: any) => {
         activePersonas[p.filename] = p.content;
       });
     }
 
-    // 2. Override with local files if running locally
-    const proj = settings.projects.find(p => p.id === projectId);
-    if (proj && proj.path && process.env.VERCEL !== '1') {
-      const fs = require('fs');
-      const path = require('path');
-      const targetFiles = ['IDENTITY.md', 'SOUL.md', 'AGENTS.md'];
-      
-      targetFiles.forEach(file => {
-        const filePath = path.join(proj.path, file);
-        if (fs.existsSync(filePath)) {
-          try {
-            activePersonas[file] = fs.readFileSync(filePath, 'utf-8');
-          } catch {}
-        }
-      });
-
-      // Also support custom fallback workspace instructions (.memgineprompt, etc.)
-      const promptFiles = ['.memgineprompt', '.claudeprompt', '.cursorrules', 'instructions.md'];
-      for (const file of promptFiles) {
-        const filePath = path.join(proj.path, file);
-        if (fs.existsSync(filePath)) {
-          try {
-            activePersonas['WORKSPACE_INSTRUCTIONS.md'] = fs.readFileSync(filePath, 'utf-8');
-            break;
-          } catch {}
-        }
-      }
-    }
-
-    // 3. Compose the system prompt in OpenClaw Markdown format
+    // Compose the system prompt in OpenClaw Markdown format
     let openClawContext = '';
     
     if (currentAgentName !== 'GENERAL_HELPER') {
@@ -110,21 +74,6 @@ export async function POST(req: Request) {
         'SOUL.md': agentPersonas?.soul_md || '',
         'AGENTS.md': agentPersonas?.agents_md || '',
       };
-
-      // Override with local if dev
-      if (proj && proj.path && process.env.VERCEL !== '1') {
-        const fs = require('fs');
-        const path = require('path');
-        const targetFiles = ['IDENTITY.md', 'SOUL.md', 'AGENTS.md'];
-        targetFiles.forEach(file => {
-          const filePath = path.join(proj.path, '.agents', currentAgentName, file);
-          if (fs.existsSync(filePath)) {
-            try {
-              activeAgentPersonas[file] = fs.readFileSync(filePath, 'utf-8');
-            } catch {}
-          }
-        });
-      }
 
       if (agentSwitched) {
         openClawContext += `\n\n[ SYSTEM NOTICE: AGENT SWAP DETECTED ]\nTHE USER HAS ASSIGNED THIS CHAT TO AGENT: ${currentAgentName.toUpperCase()}. DISREGARD PREVIOUS PERSONA RULES AND ADOPT THIS PROFILE IMMEDIATELY.\n`;
@@ -148,7 +97,7 @@ export async function POST(req: Request) {
       const needFullIdentity = isNewSession || agentSwitched;
       const fileOrder = needFullIdentity 
         ? ['IDENTITY.md', 'SOUL.md', 'AGENTS.md', 'WORKSPACE_INSTRUCTIONS.md']
-        : ['AGENTS.md', 'WORKSPACE_INSTRUCTIONS.md']; // Omit Soul & Identity on continuation to save tokens
+        : ['AGENTS.md', 'WORKSPACE_INSTRUCTIONS.md'];
       
       fileOrder.forEach(filename => {
         const content = activePersonas[filename];
@@ -182,33 +131,29 @@ To define a new sub-agent that you can delegate to later, output:
       content: `You are an AI assistant for the project "${projectId}". You have access to the full conversation history for this project. Be helpful, precise, and remember prior context from this project's sessions.${openClawContext}${memoriesContext}${proactiveCapabilities}`,
     };
 
-    if (history.length === 0 || history[history.length - 1].content !== message) {
-      history.push({ role: 'user', content: message });
+    const formattedHistory: ChatMessage[] = history.map((m: any) => ({
+      role: m.role,
+      content: m.content
+    }));
+
+    if (formattedHistory.length === 0 || formattedHistory[formattedHistory.length - 1].content !== message) {
+      formattedHistory.push({ role: 'user', content: message });
     }
 
-    const messagesForAI: ChatMessage[] = [systemPrompt, ...history];
+    const messagesForAI: ChatMessage[] = [systemPrompt, ...formattedHistory];
 
     // Call the actual AI provider
     const selectedModel = model || settings.defaultModel || 'claude-sonnet-4-20250514';
     const result = await callProvider(messagesForAI, selectedModel, settings.apiKeys);
-
-    // Save AI response to memory with agent metadata to detect swaps
-    const assistantMemId = memory.addMemory(
-      projectId,
-      result.text,
-      'assistant',
-      { model: result.model, tokensUsed: result.tokensUsed, agentName: currentAgentName },
-      userMemId
-    );
 
     return NextResponse.json({
       success: true,
       response: result.text,
       model: result.model,
       tokensUsed: result.tokensUsed,
-      userMessageId: userMemId,
-      assistantMessageId: assistantMemId,
-    });  } catch (error: any) {
+      agentName: currentAgentName
+    });
+  } catch (error: any) {
     return NextResponse.json({
       success: false,
       error: error.message || 'Unknown error',
