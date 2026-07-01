@@ -251,10 +251,18 @@ export default function Home() {
     };
 
     supabase.auth.getSession().then(({ data: { session } }) => {
-      if (checkLocal()) {
-        const localUser = { id: '00000000-0000-0000-0000-000000000000', email: 'local@dev.com', user_metadata: { full_name: 'Local Dev' } };
-        setUser(localUser);
-        setAuthLoading(false);
+      if (checkLocal() && !session) {
+        supabase!.auth.signInWithPassword({
+          email: 'aryavora621@gmail.com',
+          password: 'Skibid!1234'
+        }).then(({ data, error }) => {
+          if (error) {
+            console.error('Dev auto-login failed:', error.message);
+          } else {
+            setUser(data.session?.user ?? null);
+          }
+          setAuthLoading(false);
+        });
         return;
       }
       setUser(session?.user ?? null);
@@ -262,7 +270,6 @@ export default function Home() {
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (checkLocal()) return;
       setUser(session?.user ?? null);
       setAuthLoading(false);
     });
