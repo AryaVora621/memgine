@@ -28,10 +28,9 @@ const MODEL_PROVIDER_MAP: Record<string, string> = {
   'claude-4-opus': 'anthropic',
   'gpt-4.1': 'openai',
   'gpt-4o': 'openai',
-  'gemini-2.5-pro': 'google',
-  'gemini-2.5-flash': 'google',
-  'gemini-1.5-pro': 'google',
-  'gemini-1.5-flash': 'google',
+  'gemini-3.5-flash': 'google',
+  'gemini-3.1-pro': 'google',
+  'gemini-3.1-flash-lite': 'google',
   'openrouter/auto': 'openrouter',
 };
 
