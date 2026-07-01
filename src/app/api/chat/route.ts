@@ -46,9 +46,28 @@ export async function POST(req: Request) {
     }
 
     // Add system prompt with project context and MemPalace memories
+    let customInstructions = '';
+    const proj = settings.projects.find(p => p.id === projectId);
+    if (proj && proj.path && process.env.VERCEL !== '1') {
+      const fs = require('fs');
+      const path = require('path');
+      const promptFiles = ['.memgineprompt', '.claudeprompt', '.cursorrules', 'instructions.md'];
+      for (const file of promptFiles) {
+        const filePath = path.join(proj.path, file);
+        if (fs.existsSync(filePath)) {
+          try {
+            customInstructions = `\n\n<PROJECT_INSTRUCTIONS>\n${fs.readFileSync(filePath, 'utf-8')}\n</PROJECT_INSTRUCTIONS>`;
+            break; // Use the first matched instruction file
+          } catch (e) {
+            console.error(`Failed to read instruction file ${filePath}:`, e);
+          }
+        }
+      }
+    }
+
     const systemPrompt: ChatMessage = {
       role: 'system',
-      content: `You are an AI assistant for the project "${projectId}". You have access to the full conversation history for this project. Be helpful, precise, and remember prior context from this project's sessions.${memoriesContext}`,
+      content: `You are an AI assistant for the project "${projectId}". You have access to the full conversation history for this project. Be helpful, precise, and remember prior context from this project's sessions.${customInstructions}${memoriesContext}`,
     };
 
     const messagesForAI: ChatMessage[] = [systemPrompt, ...history];

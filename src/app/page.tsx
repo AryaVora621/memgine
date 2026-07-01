@@ -60,6 +60,7 @@ export default function Home() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [activeProjectIdx, setActiveProjectIdx] = useState(-1);
   const [newProjectName, setNewProjectName] = useState('');
+  const [newProjectPath, setNewProjectPath] = useState('');
   const [showNewProject, setShowNewProject] = useState(false);
 
   // MemPalace structured facts
@@ -374,13 +375,14 @@ export default function Home() {
       const res = await fetch('/api/projects', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newProjectName }),
+        body: JSON.stringify({ name: newProjectName, path: newProjectPath }),
       });
       const data = await res.json();
       if (data.success && data.project) {
         setProjects(prev => [...prev, data.project]);
         setActiveProjectIdx(projects.length);
         setNewProjectName('');
+        setNewProjectPath('');
         setShowNewProject(false);
 
         // Create project in Supabase if logged in
@@ -518,19 +520,29 @@ export default function Home() {
               ))}
             </ul>
 
-            {/* New project input */}
+            {/* New project form */}
             {showNewProject ? (
-              <div className="new-project-row">
+              <div className="new-project-form" style={{ padding: '0 20px', display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '12px' }}>
                 <input
                   className="new-project-input"
+                  style={{ border: '1px solid var(--grid-thick)', width: '100%', padding: '6px' }}
                   value={newProjectName}
                   onChange={e => setNewProjectName(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') handleCreateProject(); if (e.key === 'Escape') setShowNewProject(false); }}
                   placeholder="PROJECT NAME..."
-                  autoFocus
                   spellCheck={false}
                 />
-                <button className="new-project-confirm" onClick={handleCreateProject}>OK</button>
+                <input
+                  className="new-project-input"
+                  style={{ border: '1px solid var(--grid-thick)', width: '100%', padding: '6px', textTransform: 'none' }}
+                  value={newProjectPath}
+                  onChange={e => setNewProjectPath(e.target.value)}
+                  placeholder="/absolute/path/to/folder..."
+                  spellCheck={false}
+                />
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button className="new-project-confirm" style={{ flex: 1, border: '1px solid var(--grid-thick)', padding: '6px' }} onClick={handleCreateProject}>CREATE</button>
+                  <button className="new-project-confirm" style={{ border: '1px solid var(--grid-thick)', padding: '6px', background: 'transparent', color: 'var(--fg-dim)' }} onClick={() => setShowNewProject(false)}>X</button>
+                </div>
               </div>
             ) : (
               <button className="add-project-btn" onClick={() => setShowNewProject(true)}>
