@@ -30,8 +30,8 @@ const MODEL_PROVIDER_MAP: Record<string, string> = {
   'gpt-4o': 'openai',
   'gemini-3.5-flash': 'google',
   'gemini-3.1-pro': 'google',
-  'gemini-3.1-flash-lite': 'google',
   'openrouter/auto': 'openrouter',
+  'openrouter/free': 'openrouter',
 };
 
 // ── OpenRouter ──
