@@ -62,6 +62,8 @@ const MODELS = [
   { id: 'deepseek/deepseek-chat', label: 'OR / DEEPSEEK V3 (PAID / CHEAP)' },
 
   // OpenRouter (Free Models)
+  { id: 'cohere/command-r-plus:free', label: 'OR / COMMAND R+ RAG (FREE)' },
+  { id: 'cohere/command-r:free', label: 'OR / COMMAND R RAG (FREE)' },
   { id: 'meta-llama/llama-3.3-70b-instruct:free', label: 'OR / LLAMA 3.3 70B (FREE)' },
   { id: 'meta-llama/llama-3.1-8b-instruct:free', label: 'OR / LLAMA 3.1 8B (FREE)' },
   { id: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free', label: 'OR / NEMOTRON 30B (FREE)' },
@@ -251,7 +253,7 @@ export default function Home() {
 
   // Reconcile and Sync function
   const handleSync = useCallback(async (currentUser: any) => {
-    if (!currentUser || !supabase) return;
+    if (!currentUser || currentUser.id === 'local-dev-user' || !supabase) return;
     setSyncing(true);
     try {
       // 1. Fetch projects from local backend
@@ -606,7 +608,7 @@ export default function Home() {
         setGraphRefresh(prev => prev + 1);
 
         // Upload both newly added messages to Supabase if logged in
-        if (user && supabase) {
+        if (user && user.id !== 'local-dev-user' && supabase) {
           // Upload user message
           await supabase.from('memories').insert({
             id: data.userMessageId,
@@ -667,7 +669,7 @@ export default function Home() {
         setShowNewProject(false);
 
         // Create project in Supabase if logged in
-        if (user && supabase) {
+        if (user && user.id !== 'local-dev-user' && supabase) {
           await supabase.from('projects').insert({
             id: data.project.id,
             name: data.project.name,
@@ -688,7 +690,7 @@ export default function Home() {
 
   // MemPalace facts CRUD
   const handleAddFact = async () => {
-    if (!newFact.trim() || !activeProject || !user || !supabase) return;
+    if (!newFact.trim() || !activeProject || !user || user.id === 'local-dev-user' || !supabase) return;
     try {
       const { data, error } = await supabase
         .from('project_memories')
@@ -721,7 +723,7 @@ export default function Home() {
 
   // OpenClaw unified persona save
   const handleSavePersona = async () => {
-    if (!activeProject || !user || !supabase || savingPersona) return;
+    if (!activeProject || !user || user.id === 'local-dev-user' || !supabase || savingPersona) return;
     setSavingPersona(true);
     try {
       if (workspaceMode === 'project') {
@@ -859,7 +861,7 @@ export default function Home() {
 
   // Proactive execution methods
   const executeAddFact = async (room: string, content: string) => {
-    if (!activeProject || !user || !supabase) return;
+    if (!activeProject || !user || user.id === 'local-dev-user' || !supabase) return;
     try {
       const { data } = await supabase
         .from('project_memories')
@@ -926,7 +928,7 @@ export default function Home() {
   };
 
   const executeCreateAgent = async (name: string, content: string) => {
-    if (!activeProject || !user || !supabase) return;
+    if (!activeProject || !user || user.id === 'local-dev-user' || !supabase) return;
     const cleanAgentName = name.trim().toLowerCase().replace(/\s+/g, '_');
     try {
       const { data } = await supabase
