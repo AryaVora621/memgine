@@ -18,6 +18,14 @@ interface Project {
   createdAt: string;
 }
 
+interface ProjectMemory {
+  id: string;
+  project_id: string;
+  room_name: string;
+  fact_content: string;
+  created_at: string;
+}
+
 const MODELS = [
   { id: 'claude-sonnet-4-20250514', label: 'CLAUDE SONNET 4' },
   { id: 'claude-4-opus', label: 'CLAUDE 4 OPUS' },
@@ -29,23 +37,23 @@ const MODELS = [
   { id: 'claude-local', label: 'CLAUDE -P (LOCAL)' },
 ];
 
+const ROOMS = ['GENERAL', 'DATABASE', 'FRONTEND', 'APIS', 'ARCHITECTURE'];
+
 function ts(): string {
   return new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
 export default function Home() {
-  const [tab, setTab] = useState<'chat' | 'graph'>('chat');
+  const [tab, setTab] = useState<'chat' | 'graph' | 'palace'>('chat');
   const [message, setMessage] = useState('');
   const [model, setModel] = useState(MODELS[0].id);
   const [loading, setLoading] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [graphRefresh, setGraphRefresh] = useState(0);
 
-  // Environment check
-  const [isLocal, setIsLocal] = useState(false);
-
   // Authentication
   const [user, setUser] = useState<any>(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
 
   // Projects
@@ -54,6 +62,11 @@ export default function Home() {
   const [newProjectName, setNewProjectName] = useState('');
   const [showNewProject, setShowNewProject] = useState(false);
 
+  // MemPalace structured facts
+  const [projectMemories, setProjectMemories] = useState<ProjectMemory[]>([]);
+  const [activeRoom, setActiveRoom] = useState(ROOMS[0]);
+  const [newFact, setNewFact] = useState('');
+
   // Messages keyed by project id
   const [messagesByProject, setMessagesByProject] = useState<Record<string, Message[]>>({});
 
@@ -61,6 +74,9 @@ export default function Home() {
 
   const activeProject = activeProjectIdx >= 0 ? projects[activeProjectIdx] : null;
   const currentMessages = activeProject ? (messagesByProject[activeProject.id] || []) : [];
+
+  // Environment check
+  const [isLocal, setIsLocal] = useState(false);
 
   // Check if local or Vercel
   useEffect(() => {
@@ -86,9 +102,12 @@ export default function Home() {
     setSyncing(true);
     try {
       // 1. Fetch projects from local backend
-      const localRes = await fetch('/api/projects');
-      const localData = await localRes.json();
-      const localProjects: Project[] = localData.projects || [];
+      const localProjects: Project[] = [];
+      try {
+        const localRes = await fetch('/api/projects');
+        const localData = await localRes.json();
+        if (localData.projects) localProjects.push(...localData.projects);
+      } catch {}
 
       // 2. Fetch projects from Supabase
       const { data: dbProjects, error: dbProjErr } = await supabase
@@ -121,24 +140,29 @@ export default function Home() {
       for (const dbProj of updatedDbProjects || []) {
         const exists = localProjects.some(p => p.id === dbProj.id);
         if (!exists) {
-          const res = await fetch('/api/projects', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: dbProj.name, path: dbProj.path, id: dbProj.id }),
-          });
-          const data = await res.json();
-          if (data.success && data.project) {
-            localUpdatedList.push(data.project);
-          }
+          try {
+            const res = await fetch('/api/projects', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ name: dbProj.name, path: dbProj.path, id: dbProj.id }),
+            });
+            const data = await res.json();
+            if (data.success && data.project) {
+              localUpdatedList.push(data.project);
+            }
+          } catch {}
         }
       }
       setProjects(localUpdatedList);
 
       // 3. For each project, sync memories
       for (const proj of localUpdatedList) {
-        const memRes = await fetch(`/api/memory?projectId=${proj.id}`);
-        const memData = await memRes.json();
-        const localMemories = memData.nodes || [];
+        let localMemories: any[] = [];
+        try {
+          const memRes = await fetch(`/api/memory?projectId=${proj.id}`);
+          const memData = await memRes.json();
+          if (memData.nodes) localMemories = memData.nodes;
+        } catch {}
 
         const { data: dbMemories, error: dbMemErr } = await supabase
           .from('memories')
@@ -169,14 +193,16 @@ export default function Home() {
         // Sync Supabase memories to local SQLite (Download)
         const missingLocally = dbMemories?.filter(dbMem => !localMemories.some((lm: any) => lm.id === dbMem.id)) || [];
         if (missingLocally.length > 0) {
-          await fetch('/api/memory/sync', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              projectId: proj.id,
-              memories: missingLocally
-            })
-          });
+          try {
+            await fetch('/api/memory/sync', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                projectId: proj.id,
+                memories: missingLocally
+              })
+            });
+          } catch {}
         }
       }
 
@@ -188,10 +214,16 @@ export default function Home() {
     }
   }, []);
 
+  // Listen for Supabase Auth state changes
   useEffect(() => {
-    if (!supabase) return;
+    if (!supabase) {
+      setAuthLoading(false);
+      return;
+    }
+
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null);
+      setAuthLoading(false);
       if (session?.user) {
         handleSync(session.user);
       }
@@ -199,6 +231,7 @@ export default function Home() {
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
+      setAuthLoading(false);
       if (session?.user) {
         handleSync(session.user);
       }
@@ -219,6 +252,18 @@ export default function Home() {
       })
       .catch(() => {});
   }, []);
+
+  // Fetch structured facts (MemPalace) from Supabase
+  useEffect(() => {
+    if (!activeProject || !user || !supabase) return;
+    supabase
+      .from('project_memories')
+      .select('*')
+      .eq('project_id', activeProject.id)
+      .then(({ data, error }) => {
+        if (data) setProjectMemories(data);
+      });
+  }, [activeProject?.id, user]);
 
   // Auto-scroll chat
   useEffect(() => {
@@ -264,6 +309,7 @@ export default function Home() {
           projectId: activeProject.id,
           message: message,
           model,
+          projectMemories: projectMemories // Send structured MemPalace facts
         }),
       });
 
@@ -350,6 +396,39 @@ export default function Home() {
     } catch {}
   };
 
+  // MemPalace facts CRUD
+  const handleAddFact = async () => {
+    if (!newFact.trim() || !activeProject || !user || !supabase) return;
+    try {
+      const { data, error } = await supabase
+        .from('project_memories')
+        .insert({
+          project_id: activeProject.id,
+          user_id: user.id,
+          room_name: activeRoom,
+          fact_content: newFact.trim()
+        })
+        .select();
+      if (data) {
+        setProjectMemories(prev => [...prev, ...data]);
+        setNewFact('');
+      }
+    } catch (e) {}
+  };
+
+  const handleDeleteFact = async (factId: string) => {
+    if (!supabase) return;
+    try {
+      const { error } = await supabase
+        .from('project_memories')
+        .delete()
+        .eq('id', factId);
+      if (!error) {
+        setProjectMemories(prev => prev.filter(f => f.id !== factId));
+      }
+    } catch (e) {}
+  };
+
   const handleLogin = async () => {
     if (!supabase) return;
     await supabase.auth.signInWithOAuth({
@@ -371,6 +450,44 @@ export default function Home() {
     if (role === 'system') return '< SYSTEM >';
     return '< AI_RESPONSE >';
   };
+
+  // Render Full Auth Wall if not authenticated
+  if (authLoading) {
+    return (
+      <div className="auth-wall">
+        <div className="auth-card crosshairs">
+          <h1 className="text-white">NB_</h1>
+          <samp className="brand-sub">{"/// MEMGINE (MEMORY ENGINE)"}</samp>
+          <hr className="auth-hr" />
+          <samp className="loading-text">{">>> SYSTEM RESOLVING AUTHENTICATION..."}</samp>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="auth-wall">
+        <div className="auth-card crosshairs">
+          <h1>NB</h1>
+          <samp className="brand-sub">{"/// MEMGINE (MEMORY ENGINE)"}</samp>
+          <hr className="auth-hr" />
+          <p className="auth-desc">NOTEBOOK PROJECTS CONTEXT SYSTEM AND PERSISTENT MEMORY MODULE.</p>
+          {!supabase ? (
+            <div className="login-btn" style={{ opacity: 0.5, cursor: 'not-allowed', marginTop: '20px' }}>
+              [ SYNC DISABLED - CONFIGURE SUPABASE ENV VARIABLES ]
+            </div>
+          ) : (
+            <button className="login-btn" onClick={handleLogin} style={{ marginTop: '20px', padding: '12px' }}>
+              [ SIGN_IN WITH GOOGLE ]
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  const roomFacts = projectMemories.filter(pm => pm.room_name === activeRoom);
 
   return (
     <>
@@ -425,26 +542,16 @@ export default function Home() {
           <hr />
 
           <footer className="sidebar-footer">
-            {!supabase ? (
-              <button className="login-btn" style={{ opacity: 0.5, cursor: 'not-allowed' }} disabled>
-                [ SYNC DISABLED ]
-              </button>
-            ) : user ? (
-              <div className="auth-profile">
-                {user.user_metadata?.avatar_url && (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={user.user_metadata.avatar_url} alt="Profile" className="profile-img" />
-                )}
-                <div className="profile-info">
-                  <span className="profile-name truncate">{user.user_metadata?.full_name || user.email}</span>
-                  <button className="logout-btn" onClick={handleLogout}>[ SIGN_OUT ]</button>
-                </div>
+            <div className="auth-profile">
+              {user.user_metadata?.avatar_url && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={user.user_metadata.avatar_url} alt="Profile" className="profile-img" />
+              )}
+              <div className="profile-info">
+                <span className="profile-name truncate">{user.user_metadata?.full_name || user.email}</span>
+                <button className="logout-btn" onClick={handleLogout}>[ SIGN_OUT ]</button>
               </div>
-            ) : (
-              <button className="login-btn" onClick={handleLogin}>
-                [ GOOGLE SIGN_IN ]
-              </button>
-            )}
+            </div>
             <div className="footer-actions">
               <button className="settings-btn" onClick={() => setSettingsOpen(true)}>
                 [ SETTINGS ]
@@ -452,7 +559,7 @@ export default function Home() {
               <button className="settings-btn" onClick={() => handleSync(user)} disabled={!supabase || !user || syncing}>
                 {syncing ? '[ SYNCING... ]' : '[ SYNC_NOW ]'}
               </button>
-              <span className="status-dot" title={user ? "CONNECTED" : "LOCAL"} style={{ backgroundColor: user ? 'var(--green)' : 'var(--fg-dim)' }} />
+              <span className="status-dot" title="CONNECTED" style={{ backgroundColor: 'var(--green)' }} />
             </div>
           </footer>
         </nav>
@@ -481,7 +588,10 @@ export default function Home() {
                 [ CHAT ]
               </button>
               <button className={`tab-btn ${tab === 'graph' ? 'active' : ''}`} onClick={() => setTab('graph')}>
-                [ MEMORY ]
+                [ MEMORY_MAP ]
+              </button>
+              <button className={`tab-btn ${tab === 'palace' ? 'active' : ''}`} onClick={() => setTab('palace')}>
+                [ MEM_PALACE ]
               </button>
             </div>
           </header>
@@ -554,7 +664,7 @@ export default function Home() {
                 </div>
               </div>
             </>
-          ) : (
+          ) : tab === 'graph' ? (
             <>
               <div className="graph-container">
                 <samp className="graph-badge">[ MEMORY_MAP / {activeProject.name} ]</samp>
@@ -572,6 +682,55 @@ export default function Home() {
                 </div>
               </div>
             </>
+          ) : (
+            /* MemPalace structured facts workspace */
+            <div className="palace-container">
+              <div className="palace-rooms">
+                <samp className="section-label">[ PALACE ROOMS ]</samp>
+                {ROOMS.map(room => (
+                  <button
+                    key={room}
+                    className={`room-btn ${room === activeRoom ? 'active' : ''}`}
+                    onClick={() => setActiveRoom(room)}
+                  >
+                    {room}
+                  </button>
+                ))}
+              </div>
+
+              <div className="room-content">
+                <samp className="section-label">[ PERSISTENT FACTS IN ROOM: {activeRoom} ]</samp>
+                
+                <div className="facts-list">
+                  {roomFacts.length === 0 ? (
+                    <samp className="empty-sub">NO FACTS CURRENTLY PERSISTED IN THIS LOCI.</samp>
+                  ) : (
+                    roomFacts.map(fact => (
+                      <div className="fact-item" key={fact.id}>
+                        <div className="fact-text">{fact.fact_content}</div>
+                        <button className="delete-fact-btn" onClick={() => handleDeleteFact(fact.id)}>
+                          [ DELETE ]
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                <div className="add-fact-row" style={{ marginTop: 'auto' }}>
+                  <input
+                    className="fact-input"
+                    value={newFact}
+                    onChange={e => setNewFact(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') handleAddFact(); }}
+                    placeholder={`PERSIST FACT IN ${activeRoom}...`}
+                    spellCheck={false}
+                  />
+                  <button className="add-fact-btn" onClick={handleAddFact}>
+                    [ PERSIST ]
+                  </button>
+                </div>
+              </div>
+            </div>
           )}
         </main>
       </div>

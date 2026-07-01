@@ -5,7 +5,7 @@ import { callProvider, type ChatMessage } from '@/lib/providers';
 
 export async function POST(req: Request) {
   try {
-    const { projectId, message, model } = await req.json();
+    const { projectId, message, model, projectMemories } = await req.json();
 
     if (!projectId || !message) {
       return NextResponse.json({ error: 'projectId and message are required' }, { status: 400 });
@@ -26,10 +26,29 @@ export async function POST(req: Request) {
         content: m.content,
       }));
 
-    // Add system prompt with project context
+    // Format MemPalace structured memories context
+    let memoriesContext = '';
+    if (projectMemories && Array.isArray(projectMemories) && projectMemories.length > 0) {
+      memoriesContext = `\n\n<MEMORY_PALACE_CONTEXT>\n`;
+      const rooms: Record<string, string[]> = {};
+      projectMemories.forEach((pm: any) => {
+        const roomName = pm.room_name || 'GENERAL';
+        if (!rooms[roomName]) rooms[roomName] = [];
+        rooms[roomName].push(pm.fact_content);
+      });
+      for (const [room, facts] of Object.entries(rooms)) {
+        memoriesContext += `[ROOM: ${room.toUpperCase()}]\n`;
+        facts.forEach(fact => {
+          memoriesContext += `- ${fact}\n`;
+        });
+      }
+      memoriesContext += `</MEMORY_PALACE_CONTEXT>`;
+    }
+
+    // Add system prompt with project context and MemPalace memories
     const systemPrompt: ChatMessage = {
       role: 'system',
-      content: `You are an AI assistant for the project "${projectId}". You have access to the full conversation history for this project. Be helpful, precise, and remember prior context from this project's sessions.`,
+      content: `You are an AI assistant for the project "${projectId}". You have access to the full conversation history for this project. Be helpful, precise, and remember prior context from this project's sessions.${memoriesContext}`,
     };
 
     const messagesForAI: ChatMessage[] = [systemPrompt, ...history];
