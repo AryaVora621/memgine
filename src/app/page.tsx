@@ -892,9 +892,37 @@ export default function Home() {
               [ SYNC DISABLED - CONFIGURE SUPABASE ENV VARIABLES ]
             </div>
           ) : (
-            <button className="login-btn" onClick={handleLogin} style={{ marginTop: '20px', padding: '12px' }}>
-              [ SIGN_IN WITH GOOGLE ]
-            </button>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '20px' }}>
+              <button className="login-btn" onClick={handleLogin} style={{ padding: '12px' }}>
+                [ SIGN_IN WITH GOOGLE ]
+              </button>
+              
+              {isLocal && (
+                <div style={{ marginTop: '20px', borderTop: '1px dashed var(--grid-thick)', paddingTop: '20px' }}>
+                  <samp style={{ display: 'block', marginBottom: '12px', color: 'var(--fg-dim)' }}>[ LOCAL_DEV_LOGIN ]</samp>
+                  <form onSubmit={(e) => {
+                    e.preventDefault();
+                    const email = (e.currentTarget.elements.namedItem('email') as HTMLInputElement).value;
+                    const password = (e.currentTarget.elements.namedItem('password') as HTMLInputElement).value;
+                    setAuthLoading(true);
+                    supabase!.auth.signInWithPassword({ email, password }).then(({ data, error }) => {
+                      if (error) {
+                        alert(`Login failed: ${error.message}\nMake sure to create this user in your Supabase Auth dashboard first!`);
+                      } else {
+                        setUser(data.session?.user ?? null);
+                      }
+                      setAuthLoading(false);
+                    });
+                  }} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <input name="email" type="email" defaultValue="aryavora621@gmail.com" placeholder="EMAIL" style={{ background: 'transparent', border: '1px solid var(--grid-thick)', color: 'var(--fg)', padding: '8px', fontFamily: 'monospace' }} />
+                    <input name="password" type="password" defaultValue="Skibid!1234" placeholder="PASSWORD" style={{ background: 'transparent', border: '1px solid var(--grid-thick)', color: 'var(--fg)', padding: '8px', fontFamily: 'monospace' }} />
+                    <button type="submit" className="login-btn" style={{ padding: '8px', marginTop: '4px' }}>
+                      [ DEV_LOGIN ]
+                    </button>
+                  </form>
+                </div>
+              )}
+            </div>
           )}
         </div>
       </div>
