@@ -31,17 +31,22 @@ const DEFAULT_SETTINGS: AppSettings = {
   projects: [],
   defaultModel: 'claude-sonnet-4-20250514',
 };
-
 function ensureConfigDir() {
+  if (process.env.VERCEL === '1') return;
   if (!fs.existsSync(CONFIG_DIR)) {
     fs.mkdirSync(CONFIG_DIR, { recursive: true });
   }
 }
 
 export function loadSettings(): AppSettings {
+  if (process.env.VERCEL === '1') {
+    return DEFAULT_SETTINGS;
+  }
   ensureConfigDir();
   if (!fs.existsSync(SETTINGS_FILE)) {
-    saveSettings(DEFAULT_SETTINGS);
+    try {
+      saveSettings(DEFAULT_SETTINGS);
+    } catch {}
     return DEFAULT_SETTINGS;
   }
   try {
@@ -53,6 +58,9 @@ export function loadSettings(): AppSettings {
 }
 
 export function saveSettings(settings: AppSettings) {
+  if (process.env.VERCEL === '1') return;
   ensureConfigDir();
-  fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2), 'utf-8');
+  try {
+    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2), 'utf-8');
+  } catch {}
 }
