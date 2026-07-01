@@ -74,7 +74,13 @@ async function callAnthropic(messages: ChatMessage[], model: string, apiKey: str
   };
 
   if (systemMsgs.length > 0) {
-    body.system = systemMsgs.map(m => m.content).join('\n');
+    body.system = [
+      {
+        type: 'text',
+        text: systemMsgs.map(m => m.content).join('\n'),
+        cache_control: { type: 'ephemeral' }
+      }
+    ];
   }
 
   const res = await fetch('https://api.anthropic.com/v1/messages', {
