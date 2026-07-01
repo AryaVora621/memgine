@@ -39,3 +39,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local notebook storage
+.notebook_config/
+.notebook_memories/
+

@@ -1,0 +1,63 @@
+import { NextResponse } from 'next/server';
+import { getMemoryStore } from '@/lib/memoryStore';
+import { loadSettings } from '@/lib/settings';
+import { callProvider, type ChatMessage } from '@/lib/providers';
+
+export async function POST(req: Request) {
+  try {
+    const { projectId, message, model } = await req.json();
+
+    if (!projectId || !message) {
+      return NextResponse.json({ error: 'projectId and message are required' }, { status: 400 });
+    }
+
+    const settings = loadSettings();
+    const memory = getMemoryStore(projectId);
+
+    // Save user message to memory verbatim (MemPalace pattern)
+    const userMemId = memory.addMemory(projectId, message, 'user');
+
+    // Build conversation history from memory for context
+    const recentMemories = memory.getMemories(projectId, 30);
+    const history: ChatMessage[] = recentMemories
+      .reverse() // oldest first
+      .map(m => ({
+        role: m.role as 'user' | 'assistant' | 'system',
+        content: m.content,
+      }));
+
+    // Add system prompt with project context
+    const systemPrompt: ChatMessage = {
+      role: 'system',
+      content: `You are an AI assistant for the project "${projectId}". You have access to the full conversation history for this project. Be helpful, precise, and remember prior context from this project's sessions.`,
+    };
+
+    const messagesForAI: ChatMessage[] = [systemPrompt, ...history];
+
+    // Call the actual AI provider
+    const selectedModel = model || settings.defaultModel || 'claude-sonnet-4-20250514';
+    const result = await callProvider(messagesForAI, selectedModel, settings.apiKeys);
+
+    // Save AI response to memory
+    const assistantMemId = memory.addMemory(
+      projectId,
+      result.text,
+      'assistant',
+      { model: result.model, tokensUsed: result.tokensUsed },
+      userMemId
+    );
+
+    return NextResponse.json({
+      success: true,
+      response: result.text,
+      model: result.model,
+      tokensUsed: result.tokensUsed,
+      userMessageId: userMemId,
+      assistantMessageId: assistantMemId,
+    });  } catch (error: any) {
+    return NextResponse.json({
+      success: false,
+      error: error.message || 'Unknown error',
+    }, { status: 500 });
+  }
+}
