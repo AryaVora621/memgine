@@ -165,24 +165,24 @@ export async function callProvider(
 
   switch (provider) {
     case 'anthropic': {
-      const key = apiKeys.anthropic;
-      if (!key) throw new Error('ANTHROPIC API KEY NOT CONFIGURED. GO TO SETTINGS.');
+      const key = apiKeys.anthropic || process.env.ANTHROPIC_API_KEY || process.env.NEXT_PUBLIC_ANTHROPIC_API_KEY;
+      if (!key) throw new Error('ANTHROPIC API KEY NOT CONFIGURED. GO TO SETTINGS OR SET ENV VARIABLE.');
       return callAnthropic(messages, model, key);
     }
     case 'openai': {
-      const key = apiKeys.openai;
-      if (!key) throw new Error('OPENAI API KEY NOT CONFIGURED. GO TO SETTINGS.');
+      const key = apiKeys.openai || process.env.OPENAI_API_KEY || process.env.NEXT_PUBLIC_OPENAI_API_KEY;
+      if (!key) throw new Error('OPENAI API KEY NOT CONFIGURED. GO TO SETTINGS OR SET ENV VARIABLE.');
       return callOpenAI(messages, model, key);
     }
     case 'google': {
-      const key = apiKeys.google;
-      if (!key) throw new Error('GOOGLE API KEY NOT CONFIGURED. GO TO SETTINGS.');
+      const key = apiKeys.google || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_API_KEY;
+      if (!key) throw new Error('GOOGLE GEMINI API KEY NOT CONFIGURED. GO TO SETTINGS OR SET ENV VARIABLE.');
       return callGoogle(messages, model, key);
     }
     case 'openrouter':
     default: {
-      const key = apiKeys.openrouter;
-      if (!key) throw new Error('OPENROUTER API KEY NOT CONFIGURED. GO TO SETTINGS.');
+      const key = apiKeys.openrouter || process.env.OPENROUTER_API_KEY || process.env.NEXT_PUBLIC_OPENROUTER_API_KEY;
+      if (!key) throw new Error('OPENROUTER API KEY NOT CONFIGURED. GO TO SETTINGS OR SET ENV VARIABLE.');
       return callOpenRouter(messages, model, key);
     }
   }
