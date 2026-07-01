@@ -167,7 +167,7 @@ export default function Home() {
         }
 
         // Sync Supabase memories to local SQLite (Download)
-        const missingLocally = dbMemories?.filter(dbMem => !localMemories.some(lm => lm.id === dbMem.id)) || [];
+        const missingLocally = dbMemories?.filter(dbMem => !localMemories.some((lm: any) => lm.id === dbMem.id)) || [];
         if (missingLocally.length > 0) {
           await fetch('/api/memory/sync', {
             method: 'POST',
