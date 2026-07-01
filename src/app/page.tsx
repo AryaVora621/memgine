@@ -34,6 +34,16 @@ interface ProjectPersona {
   updated_at: string;
 }
 
+interface ProjectAgent {
+  id: string;
+  project_id: string;
+  name: string;
+  identity_md: string;
+  soul_md: string;
+  agents_md: string;
+  created_at: string;
+}
+
 const MODELS = [
   { id: 'claude-sonnet-4-20250514', label: 'CLAUDE SONNET 4' },
   { id: 'claude-4-opus', label: 'CLAUDE 4 OPUS' },
@@ -82,6 +92,13 @@ export default function Home() {
   const [selectedPersonaFile, setSelectedPersonaFile] = useState<'IDENTITY.md' | 'SOUL.md' | 'AGENTS.md'>('IDENTITY.md');
   const [personaContent, setPersonaContent] = useState('');
   const [savingPersona, setSavingPersona] = useState(false);
+
+  // Multi-Agent overlays
+  const [projectAgents, setProjectAgents] = useState<ProjectAgent[]>([]);
+  const [selectedAgentId, setSelectedAgentId] = useState<string>('GENERAL_HELPER');
+  const [workspaceMode, setWorkspaceMode] = useState<string>('project'); // 'project' or agent ID
+  const [newAgentName, setNewAgentName] = useState('');
+  const [showNewAgent, setShowNewAgent] = useState(false);
 
   // Messages keyed by project id
   const [messagesByProject, setMessagesByProject] = useState<Record<string, Message[]>>({});
@@ -171,7 +188,7 @@ export default function Home() {
       }
       setProjects(localUpdatedList);
 
-      // 3. For each project, sync memories
+      // 3. For each project, sync memories and agents
       for (const proj of localUpdatedList) {
         let localMemories: any[] = [];
         try {
@@ -246,6 +263,39 @@ export default function Home() {
             }
           }
         }
+
+        // 5. Sync Agents (Multi-Agent configuration directories)
+        const { data: dbAgents } = await supabase
+          .from('project_agents')
+          .select('*')
+          .eq('project_id', proj.id);
+
+        if (dbAgents && proj.path && typeof window !== 'undefined') {
+          const localIsDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+          if (localIsDev) {
+            for (const ag of dbAgents) {
+              const files = [
+                { name: 'IDENTITY.md', content: ag.identity_md },
+                { name: 'SOUL.md', content: ag.soul_md },
+                { name: 'AGENTS.md', content: ag.agents_md }
+              ];
+              for (const f of files) {
+                try {
+                  await fetch('/api/agent/sync', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      projectPath: proj.path,
+                      agentName: ag.name,
+                      filename: f.name,
+                      content: f.content
+                    })
+                  });
+                } catch {}
+              }
+            }
+          }
+        }
       }
 
       setGraphRefresh(prev => prev + 1);
@@ -315,16 +365,40 @@ export default function Home() {
       .select('*')
       .eq('project_id', activeProject.id)
       .then(({ data }) => {
-        if (data) {
-          setProjectPersonas(data);
-          const found = data.find(p => p.filename === selectedPersonaFile);
-          setPersonaContent(found?.content || '');
-        } else {
-          setProjectPersonas([]);
-          setPersonaContent('');
-        }
+        if (data) setProjectPersonas(data);
+        else setProjectPersonas([]);
       });
-  }, [activeProject?.id, user, selectedPersonaFile]);
+  }, [activeProject?.id, user]);
+
+  // Fetch multi-agent overlays from Supabase
+  useEffect(() => {
+    if (!activeProject || !user || !supabase) return;
+    supabase
+      .from('project_agents')
+      .select('*')
+      .eq('project_id', activeProject.id)
+      .then(({ data }) => {
+        if (data) setProjectAgents(data);
+        else setProjectAgents([]);
+      });
+  }, [activeProject?.id, user]);
+
+  // Unified Markdown editor content resolver (based on workspaceMode selection)
+  useEffect(() => {
+    if (workspaceMode === 'project') {
+      const found = projectPersonas.find(p => p.filename === selectedPersonaFile);
+      setPersonaContent(found?.content || '');
+    } else {
+      const agent = projectAgents.find(a => a.id === workspaceMode);
+      if (agent) {
+        if (selectedPersonaFile === 'IDENTITY.md') setPersonaContent(agent.identity_md || '');
+        else if (selectedPersonaFile === 'SOUL.md') setPersonaContent(agent.soul_md || '');
+        else if (selectedPersonaFile === 'AGENTS.md') setPersonaContent(agent.agents_md || '');
+      } else {
+        setPersonaContent('');
+      }
+    }
+  }, [workspaceMode, selectedPersonaFile, projectPersonas, projectAgents]);
 
   // Auto-scroll chat
   useEffect(() => {
@@ -362,6 +436,14 @@ export default function Home() {
     setMessage('');
     setLoading(true);
 
+    // Resolve specific selected Agent profile configuration
+    const selectedAgent = projectAgents.find(a => a.id === selectedAgentId);
+    const agentDetails = selectedAgent ? {
+      identity_md: selectedAgent.identity_md,
+      soul_md: selectedAgent.soul_md,
+      agents_md: selectedAgent.agents_md
+    } : null;
+
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
@@ -371,7 +453,9 @@ export default function Home() {
           message: message,
           model,
           projectMemories: projectMemories, // Send structured MemPalace facts
-          projectPersonas: projectPersonas   // Send OpenClaw unified markdown personas
+          projectPersonas: projectPersonas,   // Send OpenClaw unified markdown personas
+          agentName: selectedAgent ? selectedAgent.name : 'GENERAL_HELPER',
+          agentPersonas: agentDetails
         }),
       });
 
@@ -492,46 +576,126 @@ export default function Home() {
     } catch (e) {}
   };
 
-  // OpenClaw persona save
+  // OpenClaw unified persona save
   const handleSavePersona = async () => {
     if (!activeProject || !user || !supabase || savingPersona) return;
     setSavingPersona(true);
     try {
-      const { data, error } = await supabase
-        .from('project_personas')
-        .upsert({
-          project_id: activeProject.id,
-          user_id: user.id,
-          filename: selectedPersonaFile,
-          content: personaContent,
-          updated_at: new Date().toISOString()
-        }, { onConflict: 'project_id,filename' })
-        .select();
+      if (workspaceMode === 'project') {
+        const { data } = await supabase
+          .from('project_personas')
+          .upsert({
+            project_id: activeProject.id,
+            user_id: user.id,
+            filename: selectedPersonaFile,
+            content: personaContent,
+            updated_at: new Date().toISOString()
+          }, { onConflict: 'project_id,filename' })
+          .select();
 
-      if (data && data[0]) {
-        // Update local list state
-        setProjectPersonas(prev => {
-          const filtered = prev.filter(p => p.filename !== selectedPersonaFile);
-          return [...filtered, data[0]];
-        });
+        if (data && data[0]) {
+          setProjectPersonas(prev => {
+            const filtered = prev.filter(p => p.filename !== selectedPersonaFile);
+            return [...filtered, data[0]];
+          });
 
-        // If local path is set, sync locally
-        if (activeProject.path && isLocal) {
-          try {
-            await fetch('/api/persona/sync', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                projectPath: activeProject.path,
-                filename: selectedPersonaFile,
-                content: personaContent
-              })
-            });
-          } catch {}
+          // Sync locally if in dev mode
+          if (activeProject.path && isLocal) {
+            try {
+              await fetch('/api/persona/sync', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  projectPath: activeProject.path,
+                  filename: selectedPersonaFile,
+                  content: personaContent
+                })
+              });
+            } catch {}
+          }
+        }
+      } else {
+        // Saving properties for a specific Agent
+        const targetColumn = selectedPersonaFile === 'IDENTITY.md' ? 'identity_md' : selectedPersonaFile === 'SOUL.md' ? 'soul_md' : 'agents_md';
+        const { data } = await supabase
+          .from('project_agents')
+          .update({
+            [targetColumn]: personaContent
+          })
+          .eq('id', workspaceMode)
+          .select();
+
+        if (data && data[0]) {
+          setProjectAgents(prev => prev.map(a => a.id === workspaceMode ? data[0] : a));
+          
+          // Sync locally if in dev mode
+          if (activeProject.path && isLocal) {
+            try {
+              await fetch('/api/agent/sync', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  projectPath: activeProject.path,
+                  agentName: data[0].name,
+                  filename: selectedPersonaFile,
+                  content: personaContent
+                })
+              });
+            } catch {}
+          }
         }
       }
     } catch (e) {}
     setSavingPersona(false);
+  };
+
+  // Push new Agent into project (Supabase & state)
+  const handlePushAgent = async () => {
+    if (!newAgentName.trim() || !activeProject || !user || !supabase) return;
+    const cleanAgentName = newAgentName.trim().toLowerCase().replace(/\s+/g, '_');
+    try {
+      const { data, error } = await supabase
+        .from('project_agents')
+        .insert({
+          project_id: activeProject.id,
+          user_id: user.id,
+          name: cleanAgentName,
+          identity_md: `# ${cleanAgentName.toUpperCase()} IDENTITY\nDescribe baseline purposes...`,
+          soul_md: `# ${cleanAgentName.toUpperCase()} SOUL\nDescribe character personality...`,
+          agents_md: `# ${cleanAgentName.toUpperCase()} RULES\nDefine non-negotiable operation logic...`
+        })
+        .select();
+
+      if (data && data[0]) {
+        setProjectAgents(prev => [...prev, data[0]]);
+        setWorkspaceMode(data[0].id);
+        setNewAgentName('');
+        setShowNewAgent(false);
+
+        // Sync files locally if running locally
+        if (activeProject.path && isLocal) {
+          const files = [
+            { name: 'IDENTITY.md', content: data[0].identity_md },
+            { name: 'SOUL.md', content: data[0].soul_md },
+            { name: 'AGENTS.md', content: data[0].agents_md }
+          ];
+          for (const f of files) {
+            try {
+              await fetch('/api/agent/sync', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  projectPath: activeProject.path,
+                  agentName: cleanAgentName,
+                  filename: f.name,
+                  content: f.content
+                })
+              });
+            } catch {}
+          }
+        }
+      }
+    } catch (e) {}
   };
 
   const handleLogin = async () => {
@@ -696,6 +860,18 @@ export default function Home() {
                   <option key={m.id} value={m.id}>{m.label}</option>
                 ))}
               </select>
+
+              <samp className="model-label" style={{ marginLeft: '12px' }}>AGENT:</samp>
+              <select
+                className="model-select"
+                value={selectedAgentId}
+                onChange={e => setSelectedAgentId(e.target.value)}
+              >
+                <option value="GENERAL_HELPER">GENERAL HELPER</option>
+                {projectAgents.map(a => (
+                  <option key={a.id} value={a.id}>{a.name.toUpperCase()}</option>
+                ))}
+              </select>
             </div>
 
             <div className="tab-group">
@@ -709,7 +885,7 @@ export default function Home() {
                 [ MEM_PALACE ]
               </button>
               <button className={`tab-btn ${tab === 'persona' ? 'active' : ''}`} onClick={() => setTab('persona')}>
-                [ PERSONA ]
+                [ AGENT_WORK ]
               </button>
             </div>
           </header>
@@ -853,7 +1029,50 @@ export default function Home() {
             /* OpenClaw Markdown Persona workspace */
             <div className="palace-container">
               <div className="palace-rooms">
-                <samp className="section-label">[ OPENCLAW WORKSPACE ]</samp>
+                <samp className="section-label">[ CONFIG MODE ]</samp>
+                <select
+                  className="model-select"
+                  style={{ width: 'calc(100% - 24px)', margin: '12px' }}
+                  value={workspaceMode}
+                  onChange={e => setWorkspaceMode(e.target.value)}
+                >
+                  <option value="project">PROJECT ROOT CONTEXT</option>
+                  {projectAgents.map(a => (
+                    <option key={a.id} value={a.id}>AGENT: {a.name.toUpperCase()}</option>
+                  ))}
+                </select>
+
+                <hr style={{ border: 'none', height: '1px', background: 'var(--grid)', margin: '0' }} />
+
+                {/* Create Agent Row */}
+                {showNewAgent ? (
+                  <div style={{ padding: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <input
+                      className="new-project-input"
+                      style={{ border: '1px solid var(--grid-thick)', width: '100%', padding: '6px' }}
+                      value={newAgentName}
+                      onChange={e => setNewAgentName(e.target.value)}
+                      placeholder="AGENT NAME..."
+                      spellCheck={false}
+                    />
+                    <div style={{ display: 'flex', gap: '6px' }}>
+                      <button className="new-project-confirm" style={{ flex: 1, padding: '4px' }} onClick={handlePushAgent}>PUSH</button>
+                      <button className="new-project-confirm" style={{ padding: '4px', background: 'transparent', color: 'var(--fg-dim)' }} onClick={() => setShowNewAgent(false)}>X</button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    className="add-project-btn"
+                    style={{ width: 'calc(100% - 24px)', margin: '12px' }}
+                    onClick={() => setShowNewAgent(true)}
+                  >
+                    + PUSH AGENT
+                  </button>
+                )}
+
+                <hr style={{ border: 'none', height: '1px', background: 'var(--grid)', margin: '0' }} />
+
+                <samp className="section-label" style={{ marginTop: '12px' }}>[ WORKSPACE FILES ]</samp>
                 {PERSONA_FILES.map(file => (
                   <button
                     key={file}
@@ -866,7 +1085,9 @@ export default function Home() {
               </div>
 
               <div className="room-content">
-                <samp className="section-label">[ EDITING WORKSPACE FILE: {selectedPersonaFile} ]</samp>
+                <samp className="section-label">
+                  [ EDITING: {workspaceMode === 'project' ? 'PROJECT ROOT' : `AGENT ${projectAgents.find(a => a.id === workspaceMode)?.name.toUpperCase()}`} / {selectedPersonaFile} ]
+                </samp>
                 
                 <textarea
                   className="compose-input"
@@ -884,7 +1105,7 @@ export default function Home() {
                   rows={20}
                   value={personaContent}
                   onChange={e => setPersonaContent(e.target.value)}
-                  placeholder={`Write your OpenClaw markdown system context for ${selectedPersonaFile} here...`}
+                  placeholder={`Write your markdown instructions for ${selectedPersonaFile} here...`}
                   spellCheck={false}
                 />
 

@@ -5,7 +5,7 @@ import { callProvider, type ChatMessage } from '@/lib/providers';
 
 export async function POST(req: Request) {
   try {
-    const { projectId, message, model, projectMemories, projectPersonas } = await req.json();
+    const { projectId, message, model, projectMemories, projectPersonas, agentName, agentPersonas } = await req.json();
 
     if (!projectId || !message) {
       return NextResponse.json({ error: 'projectId and message are required' }, { status: 400 });
@@ -46,53 +46,85 @@ export async function POST(req: Request) {
     }
 
     // Build OpenClaw unified identity context (local override + cloud fallback)
-    const activePersonas: Record<string, string> = {};
-    
-    // 1. Populate with cloud synced personas first
-    if (projectPersonas && Array.isArray(projectPersonas)) {
-      projectPersonas.forEach((p: any) => {
-        activePersonas[p.filename] = p.content;
-      });
-    }
-
-    // 2. Override with local files if running locally
-    const proj = settings.projects.find(p => p.id === projectId);
-    if (proj && proj.path && process.env.VERCEL !== '1') {
-      const fs = require('fs');
-      const path = require('path');
-      const targetFiles = ['IDENTITY.md', 'SOUL.md', 'AGENTS.md'];
-      
-      targetFiles.forEach(file => {
-        const filePath = path.join(proj.path, file);
-        if (fs.existsSync(filePath)) {
-          try {
-            activePersonas[file] = fs.readFileSync(filePath, 'utf-8');
-          } catch {}
-        }
-      });
-
-      // Also support custom fallback workspace instructions (.memgineprompt, etc.)
-      const promptFiles = ['.memgineprompt', '.claudeprompt', '.cursorrules', 'instructions.md'];
-      for (const file of promptFiles) {
-        const filePath = path.join(proj.path, file);
-        if (fs.existsSync(filePath)) {
-          try {
-            activePersonas['WORKSPACE_INSTRUCTIONS.md'] = fs.readFileSync(filePath, 'utf-8');
-            break;
-          } catch {}
-        }
-      }
-    }
-
-    // 3. Compose the prompt in OpenClaw Markdown format
     let openClawContext = '';
-    const fileOrder = ['IDENTITY.md', 'SOUL.md', 'AGENTS.md', 'WORKSPACE_INSTRUCTIONS.md'];
-    fileOrder.forEach(filename => {
-      const content = activePersonas[filename];
-      if (content && content.trim()) {
-        openClawContext += `\n\n# ${filename.replace('.md', '').toUpperCase()}\n${content}\n`;
+
+    if (agentName && agentName !== 'GENERAL_HELPER') {
+      // ── Compose specific Agent system prompt ──
+      const activeAgentPersonas: Record<string, string> = {
+        'IDENTITY.md': agentPersonas?.identity_md || '',
+        'SOUL.md': agentPersonas?.soul_md || '',
+        'AGENTS.md': agentPersonas?.agents_md || '',
+      };
+
+      // Override with local files if running locally
+      const proj = settings.projects.find(p => p.id === projectId);
+      if (proj && proj.path && process.env.VERCEL !== '1') {
+        const fs = require('fs');
+        const path = require('path');
+        const targetFiles = ['IDENTITY.md', 'SOUL.md', 'AGENTS.md'];
+        targetFiles.forEach(file => {
+          const filePath = path.join(proj.path, '.agents', agentName, file);
+          if (fs.existsSync(filePath)) {
+            try {
+              activeAgentPersonas[file] = fs.readFileSync(filePath, 'utf-8');
+            } catch {}
+          }
+        });
       }
-    });
+
+      openClawContext += `\n\n# AGENT DESIGNATION: ${agentName.toUpperCase()}\n`;
+      if (activeAgentPersonas['IDENTITY.md'].trim()) openClawContext += `\n# IDENTITY\n${activeAgentPersonas['IDENTITY.md']}\n`;
+      if (activeAgentPersonas['SOUL.md'].trim()) openClawContext += `\n# SOUL\n${activeAgentPersonas['SOUL.md']}\n`;
+      if (activeAgentPersonas['AGENTS.md'].trim()) openClawContext += `\n# AGENTS (RULES)\n${activeAgentPersonas['AGENTS.md']}\n`;
+    } else {
+      // ── Fallback to default project root configuration ──
+      const activePersonas: Record<string, string> = {};
+      
+      // 1. Populate with cloud synced personas first
+      if (projectPersonas && Array.isArray(projectPersonas)) {
+        projectPersonas.forEach((p: any) => {
+          activePersonas[p.filename] = p.content;
+        });
+      }
+
+      // 2. Override with local files if running locally
+      const proj = settings.projects.find(p => p.id === projectId);
+      if (proj && proj.path && process.env.VERCEL !== '1') {
+        const fs = require('fs');
+        const path = require('path');
+        const targetFiles = ['IDENTITY.md', 'SOUL.md', 'AGENTS.md'];
+        
+        targetFiles.forEach(file => {
+          const filePath = path.join(proj.path, file);
+          if (fs.existsSync(filePath)) {
+            try {
+              activePersonas[file] = fs.readFileSync(filePath, 'utf-8');
+            } catch {}
+          }
+        });
+
+        // Also support custom fallback workspace instructions (.memgineprompt, etc.)
+        const promptFiles = ['.memgineprompt', '.claudeprompt', '.cursorrules', 'instructions.md'];
+        for (const file of promptFiles) {
+          const filePath = path.join(proj.path, file);
+          if (fs.existsSync(filePath)) {
+            try {
+              activePersonas['WORKSPACE_INSTRUCTIONS.md'] = fs.readFileSync(filePath, 'utf-8');
+              break;
+            } catch {}
+          }
+        }
+      }
+
+      // 3. Compose the prompt in OpenClaw Markdown format
+      const fileOrder = ['IDENTITY.md', 'SOUL.md', 'AGENTS.md', 'WORKSPACE_INSTRUCTIONS.md'];
+      fileOrder.forEach(filename => {
+        const content = activePersonas[filename];
+        if (content && content.trim()) {
+          openClawContext += `\n\n# ${filename.replace('.md', '').toUpperCase()}\n${content}\n`;
+        }
+      });
+    }
 
     const systemPrompt: ChatMessage = {
       role: 'system',
