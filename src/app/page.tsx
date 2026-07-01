@@ -47,30 +47,14 @@ interface ProjectAgent {
 const MODELS = [
   // Native Direct Keys
   { id: 'claude-5-sonnet-20260630', label: 'CLAUDE SONNET 5 (NATIVE)' },
-  { id: 'claude-4-opus', label: 'CLAUDE 4 OPUS (NATIVE)' },
-  { id: 'gpt-4o', label: 'GPT-4O (NATIVE)' },
   { id: 'gemini-3.5-flash', label: 'GEMINI 3.5 FLASH (NATIVE)' },
   { id: 'gemini-3.1-pro', label: 'GEMINI 3.1 PRO (NATIVE)' },
 
-  // OpenRouter (Paid Models)
-  { id: 'anthropic/claude-5-sonnet-20260630', label: 'OR / CLAUDE SONNET 5 (PAID)' },
-  { id: 'anthropic/claude-4-opus', label: 'OR / CLAUDE 4 OPUS (PAID)' },
-  { id: 'openai/gpt-4o', label: 'OR / GPT-4O (PAID)' },
-  { id: 'google/gemini-3.5-flash', label: 'OR / GEMINI 3.5 FLASH (PAID)' },
-  { id: 'google/gemini-3.1-pro', label: 'OR / GEMINI 3.1 PRO (PAID)' },
-  { id: 'meta-llama/llama-3.3-70b-instruct', label: 'OR / LLAMA 3.3 70B (PAID)' },
-  { id: 'deepseek/deepseek-chat', label: 'OR / DEEPSEEK V3 (PAID / CHEAP)' },
-
   // OpenRouter (Free Models)
-  { id: 'cohere/command-r-plus:free', label: 'OR / COMMAND R+ RAG (FREE)' },
-  { id: 'cohere/command-r:free', label: 'OR / COMMAND R RAG (FREE)' },
-  { id: 'meta-llama/llama-3.3-70b-instruct:free', label: 'OR / LLAMA 3.3 70B (FREE)' },
-  { id: 'meta-llama/llama-3.1-8b-instruct:free', label: 'OR / LLAMA 3.1 8B (FREE)' },
-  { id: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free', label: 'OR / NEMOTRON 30B (FREE)' },
-  { id: 'qwen/qwen3-coder:free', label: 'OR / QWEN 3 CODER (FREE)' },
-  { id: 'qwen/qwen-2-7b-instruct:free', label: 'OR / QWEN 2 7B (FREE)' },
-  { id: 'mistralai/mistral-7b-instruct:free', label: 'OR / MISTRAL 7B (FREE)' },
-  { id: 'openchat/openchat-7b:free', label: 'OR / OPENCHAT 7B (FREE)' },
+  { id: 'nvidia/nemotron-3-ultra-550b-a55b:free', label: 'OR / NEMOTRON ULTRA 550B (FREE)' },
+  { id: 'google/gemma-4-31b-it:free', label: 'OR / GEMMA 4 31B (FREE)' },
+  { id: 'nousresearch/hermes-3-llama-3.1-405b:free', label: 'OR / HERMES 3 405B (FREE)' },
+  { id: 'openai/gpt-oss-120b:free', label: 'OR / GPT OSS 120B (FREE)' },
   { id: 'openrouter/auto', label: 'OR / AUTO-ROUTER' },
 
   // Local Models
@@ -1068,10 +1052,15 @@ export default function Home() {
                   <button
                     className={`dir-btn ${i === activeProjectIdx ? 'active' : ''}`}
                     onClick={() => setActiveProjectIdx(i)}
+                    style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', padding: '8px 12px' }}
                   >
-                    <span className="dir-prefix">{i === activeProjectIdx ? '>>>' : '---'}</span>
-                    <span>{proj.name}</span>
-                    <span className="dir-index">[{String(i + 1).padStart(2, '0')}]</span>
+                    <div style={{ display: 'flex', width: '100%', justifyContent: 'space-between' }}>
+                      <span>
+                        <span className="dir-prefix">{i === activeProjectIdx ? '>>>' : '---'}</span>
+                        <span>{proj.name}</span>
+                      </span>
+                      <span className="dir-index">[{String(i + 1).padStart(2, '0')}]</span>
+                    </div>
                   </button>
                 </li>
               ))}
@@ -1086,14 +1075,6 @@ export default function Home() {
                   value={newProjectName}
                   onChange={e => setNewProjectName(e.target.value)}
                   placeholder="PROJECT NAME..."
-                  spellCheck={false}
-                />
-                <input
-                  className="new-project-input"
-                  style={{ border: '1px solid var(--grid-thick)', width: '100%', padding: '6px', textTransform: 'none' }}
-                  value={newProjectPath}
-                  onChange={e => setNewProjectPath(e.target.value)}
-                  placeholder="/absolute/path/to/folder..."
                   spellCheck={false}
                 />
                 <div style={{ display: 'flex', gap: '8px' }}>

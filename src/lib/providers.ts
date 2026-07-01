@@ -25,20 +25,15 @@ interface ApiKeys {
 // ── Model → Provider mapping ──
 const MODEL_PROVIDER_MAP: Record<string, string> = {
   'claude-5-sonnet-20260630': 'anthropic',
-  'claude-4-opus': 'anthropic',
-  'gpt-4.1': 'openai',
-  'gpt-4o': 'openai',
   'gemini-3.5-flash': 'google',
   'gemini-3.1-pro': 'google',
   'openrouter/auto': 'openrouter',
-  'openrouter/free': 'openrouter',
-  'meta-llama/llama-3.3-70b-instruct:free': 'openrouter',
-  'meta-llama/llama-3.1-8b-instruct:free': 'openrouter',
-  'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free': 'openrouter',
-  'qwen/qwen3-coder:free': 'openrouter',
-  'qwen/qwen-2-7b-instruct:free': 'openrouter',
-  'mistralai/mistral-7b-instruct:free': 'openrouter',
-  'openchat/openchat-7b:free': 'openrouter',
+  'nvidia/nemotron-3-ultra-550b-a55b:free': 'openrouter',
+  'google/gemma-4-31b-it:free': 'openrouter',
+  'nousresearch/hermes-3-llama-3.1-405b:free': 'openrouter',
+  'openai/gpt-oss-120b:free': 'openrouter',
+  'agy-local': 'local',
+  'claude-local': 'local',
 };
 
 // ── OpenRouter ──
@@ -52,7 +47,7 @@ async function callOpenRouter(messages: ChatMessage[], model: string, apiKey: st
       'X-Title': 'Notebook',
     },
     body: JSON.stringify({
-      model: model === 'openrouter/auto' ? 'anthropic/claude-5-sonnet-20260630' : model,
+      model,
       messages,
     }),
   });
@@ -188,11 +183,46 @@ export async function callProvider(
       if (!key) throw new Error('GOOGLE GEMINI API KEY NOT CONFIGURED. GO TO SETTINGS OR SET ENV VARIABLE.');
       return callGoogle(messages, model, key);
     }
+    case 'local':
+      return callLocalCLI(messages, model);
     case 'openrouter':
     default: {
       const key = apiKeys.openrouter || process.env.OPENROUTER_API_KEY || process.env.NEXT_PUBLIC_OPENROUTER_API_KEY;
-      if (!key) throw new Error('OPENROUTER API KEY NOT CONFIGURED. GO TO SETTINGS OR SET ENV VARIABLE.');
-      return callOpenRouter(messages, model, key);
+      if (!key && model !== 'agy-local' && model !== 'claude-local') {
+        throw new Error('OPENROUTER API KEY NOT CONFIGURED. GO TO SETTINGS OR SET ENV VARIABLE.');
+      }
+      return callOpenRouter(messages, model, key || '');
     }
+  }
+}
+
+import { execSync } from 'child_process';
+import os from 'os';
+import path from 'path';
+import fs from 'fs';
+
+async function callLocalCLI(messages: ChatMessage[], model: string): Promise<ProviderResponse> {
+  const isAgy = model === 'agy-local';
+  const prompt = messages.map(m => `[${m.role.toUpperCase()}]\n${m.content}`).join('\n\n');
+  
+  try {
+    const tmpFile = path.join(os.tmpdir(), `memgine_local_${Date.now()}.txt`);
+    fs.writeFileSync(tmpFile, prompt, 'utf-8');
+    
+    // We assume the cli supports reading from stdin or passing file contents
+    const cmd = isAgy 
+      ? `agy -p "$(cat ${tmpFile})"` 
+      : `claude -p "$(cat ${tmpFile})"`;
+      
+    const output = execSync(cmd, { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] });
+    fs.unlinkSync(tmpFile);
+    
+    return {
+      text: output,
+      model,
+      tokensUsed: 0
+    };
+  } catch (err: any) {
+    throw new Error(`Local CLI error: ${err.stderr || err.message}`);
   }
 }
