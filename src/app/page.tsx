@@ -54,7 +54,7 @@ const MODELS = [
   { id: 'gemini-1.5-pro', label: 'GEMINI 1.5 PRO' },
   { id: 'gemini-1.5-flash', label: 'GEMINI 1.5 FLASH (CHEAP)' },
   { id: 'deepseek/deepseek-chat', label: 'DEEPSEEK V3 (CHEAP)' },
-  { id: 'meta-llama/llama-3-8b-instruct:free', label: 'LLAMA 3 8B (FREE)' },
+  { id: 'meta-llama/llama-3.1-8b-instruct:free', label: 'LLAMA 3.1 8B (FREE)' },
   { id: 'google/gemma-2-9b-it:free', label: 'GEMMA 2 9B (FREE)' },
   { id: 'qwen/qwen-2-7b-instruct:free', label: 'QWEN 2 7B (FREE)' },
   { id: 'openrouter/auto', label: 'OPENROUTER / AUTO' },
