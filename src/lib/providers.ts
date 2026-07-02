@@ -58,8 +58,24 @@ async function callOpenRouter(messages: ChatMessage[], model: string, apiKey: st
   }
 
   const data = await res.json();
+  const choice = data.choices?.[0];
+  const msg = choice?.message;
+  // Content can be a plain string or an array of typed parts depending on the provider
+  let text = '';
+  if (typeof msg?.content === 'string') {
+    text = msg.content;
+  } else if (Array.isArray(msg?.content)) {
+    text = msg.content.map((p: { text?: string }) => p?.text || '').join('');
+  }
+  if (!text && typeof msg?.reasoning === 'string') {
+    text = msg.reasoning;
+  }
+  if (!text) {
+    const detail = data.error?.message || choice?.error?.message || choice?.finish_reason;
+    throw new Error(`OpenRouter returned no content${detail ? ` (${detail})` : ''}. Retry or switch models.`);
+  }
   return {
-    text: data.choices?.[0]?.message?.content || '',
+    text,
     model: data.model || model,
     tokensUsed: data.usage?.total_tokens,
   };
@@ -71,7 +87,12 @@ async function callAnthropic(messages: ChatMessage[], model: string, apiKey: str
   const systemMsgs = messages.filter(m => m.role === 'system');
   const convMsgs = messages.filter(m => m.role !== 'system');
 
-  const body: any = {
+  const body: {
+    model: string;
+    max_tokens: number;
+    messages: { role: string; content: string }[];
+    system?: { type: string; text: string; cache_control: { type: string } }[];
+  } = {
     model,
     max_tokens: 4096,
     messages: convMsgs.map(m => ({ role: m.role, content: m.content })),
@@ -103,7 +124,7 @@ async function callAnthropic(messages: ChatMessage[], model: string, apiKey: str
   }
 
   const data = await res.json();
-  const text = data.content?.map((c: any) => c.text).join('') || '';
+  const text = data.content?.map((c: { text?: string }) => c.text ?? '').join('') || '';
   return {
     text,
     model: data.model || model,
@@ -222,7 +243,8 @@ async function callLocalCLI(messages: ChatMessage[], model: string): Promise<Pro
       model,
       tokensUsed: 0
     };
-  } catch (err: any) {
-    throw new Error(`Local CLI error: ${err.stderr || err.message}`);
+  } catch (err) {
+    const execErr = err as { stderr?: string; message?: string };
+    throw new Error(`Local CLI error: ${execErr.stderr || execErr.message}`);
   }
 }

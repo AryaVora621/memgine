@@ -44,8 +44,8 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
         const data = await res.json();
         setStatus(`ERROR: ${data.error}`);
       }
-    } catch (e: any) {
-      setStatus(`ERROR: ${e.message}`);
+    } catch (e) {
+      setStatus(`ERROR: ${e instanceof Error ? e.message : 'REQUEST FAILED'}`);
     }
     setLoading(false);
   };
@@ -68,6 +68,7 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
               <input
                 className="field-input"
                 type="password"
+                autoComplete="new-password"
                 value={keys[provider]}
                 onChange={e => setKeys(prev => ({ ...prev, [provider]: e.target.value }))}
                 placeholder={`${provider.toUpperCase()} API KEY...`}

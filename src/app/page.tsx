@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo, useSyncExternalStore } from 'react';
 import GraphView from '@/components/GraphView';
 import SettingsModal from '@/components/SettingsModal';
 import { supabase } from '@/lib/supabaseClient';
+import type { Session } from '@supabase/supabase-js';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -18,6 +19,13 @@ interface Project {
   name: string;
   path: string;
   createdAt: string;
+}
+
+interface Chat {
+  id: string;
+  project_id: string;
+  name: string;
+  created_at: string;
 }
 
 interface ProjectMemory {
@@ -186,15 +194,31 @@ function ts(): string {
 export default function Home() {
   const [tab, setTab] = useState<'chat' | 'graph' | 'palace' | 'persona'>('chat');
   const [message, setMessage] = useState('');
-  const [model, setModel] = useState(MODELS[0].id);
+  // Model selection persists across reloads via localStorage
+  const storedModel = useSyncExternalStore(
+    () => () => {},
+    () => localStorage.getItem('notebook-model'),
+    () => null
+  );
+  const [modelOverride, setModelOverride] = useState<string | null>(null);
+  const model = modelOverride
+    ?? (storedModel && MODELS.some(m => m.id === storedModel) ? storedModel : MODELS[0].id);
+  const setModel = (id: string) => {
+    setModelOverride(id);
+    try { localStorage.setItem('notebook-model', id); } catch {}
+  };
   const [loading, setLoading] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [graphRefresh, setGraphRefresh] = useState(0);
 
-  // Authentication
-
-  const [authLoading, setAuthLoading] = useState(true);
-  const [syncing, setSyncing] = useState(false);
+  // Authentication — the whole app is gated behind a Supabase session
+  const [session, setSession] = useState<Session | null>(null);
+  // Ready immediately when Supabase isn't configured (login screen shows the config error)
+  const [authReady, setAuthReady] = useState(!supabase);
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [loginError, setLoginError] = useState('');
+  const [loggingIn, setLoggingIn] = useState(false);
 
   // Projects & Chats
   const [projects, setProjects] = useState<Project[]>([]);
@@ -202,7 +226,7 @@ export default function Home() {
   const [newProjectName, setNewProjectName] = useState('');
   const [showNewProject, setShowNewProject] = useState(false);
 
-  const [chats, setChats] = useState<any[]>([]);
+  const [chats, setChats] = useState<Chat[]>([]);
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
 
   // MemPalace structured facts
@@ -213,7 +237,7 @@ export default function Home() {
   // OpenClaw unified markdown files
   const [projectPersonas, setProjectPersonas] = useState<ProjectPersona[]>([]);
   const [selectedPersonaFile, setSelectedPersonaFile] = useState<'IDENTITY.md' | 'SOUL.md' | 'AGENTS.md'>('IDENTITY.md');
-  const [personaContent, setPersonaContent] = useState('');
+  const [personaDraft, setPersonaDraft] = useState<string | null>(null);
   const [savingPersona, setSavingPersona] = useState(false);
 
   // Multi-Agent overlays
@@ -230,10 +254,22 @@ export default function Home() {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const activeProject = activeProjectIdx >= 0 ? projects[activeProjectIdx] : null;
-  const currentMessages = activeChatId ? (messagesByChat[activeChatId] || []) : [];
+  const activeProjectId = activeProject?.id;
+  const activeProjectName = activeProject?.name ?? '';
+  const currentMessages = useMemo(
+    () => (activeChatId ? messagesByChat[activeChatId] || [] : []),
+    [activeChatId, messagesByChat]
+  );
 
-  // Environment check
-  const [isLocal, setIsLocal] = useState(false);
+  // Environment check — false during SSR, resolved from the hostname on the client
+  const isLocal = useSyncExternalStore(
+    () => () => {},
+    () =>
+      window.location.hostname === 'localhost' ||
+      window.location.hostname === '127.0.0.1' ||
+      window.location.hostname.startsWith('192.168.'),
+    () => false
+  );
 
   // Theme and Sidebar Dragging
   const [sidebarWidth, setSidebarWidth] = useState(260);
@@ -263,17 +299,6 @@ export default function Home() {
     };
   }, []);
 
-  // Check if local or Vercel
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      setIsLocal(
-        window.location.hostname === 'localhost' ||
-        window.location.hostname === '127.0.0.1' ||
-        window.location.hostname.startsWith('192.168.')
-      );
-    }
-  }, []);
-
   const filteredModels = MODELS.filter(m => {
     if (m.id.endsWith('-local')) {
       return isLocal;
@@ -281,9 +306,29 @@ export default function Home() {
     return true;
   });
 
-  // Fetch projects from Supabase
+  // Track the Supabase auth session
   useEffect(() => {
     if (!supabase) return;
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session);
+      setAuthReady(true);
+    });
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => {
+      setSession(s);
+      if (!s) {
+        setProjects([]);
+        setActiveProjectIdx(-1);
+        setChats([]);
+        setActiveChatId(null);
+        setMessagesByChat({});
+      }
+    });
+    return () => sub.subscription.unsubscribe();
+  }, []);
+
+  // Fetch projects from Supabase
+  useEffect(() => {
+    if (!supabase || !session) return;
     supabase
       .from('projects')
       .select('*')
@@ -297,15 +342,15 @@ export default function Home() {
           setActiveProjectIdx(-1);
         }
       });
-  }, []);
+  }, [session]);
 
   // Fetch chats for the active project
   useEffect(() => {
-    if (!activeProject || !supabase) return;
+    if (!activeProjectId || !supabase) return;
     supabase
       .from('chats')
       .select('*')
-      .eq('project_id', activeProject.id)
+      .eq('project_id', activeProjectId)
       .order('created_at', { ascending: true })
       .then(({ data }) => {
         if (data && data.length > 0) {
@@ -316,9 +361,9 @@ export default function Home() {
           setActiveChatId(null);
         }
       });
-  }, [activeProject?.id]);
+  }, [activeProjectId]);
 
-  // Fetch memories for the active chat
+  // Fetch memories for the active chat, seeded with the boot banner
   useEffect(() => {
     if (!activeChatId || !supabase) return;
     supabase
@@ -335,66 +380,76 @@ export default function Home() {
           }));
           setMessagesByChat(prev => ({
             ...prev,
-            [activeChatId]: loadedMsgs
+            [activeChatId]: [
+              { role: 'system', text: `[ SYS_INIT ] CONTEXT ENGINE LOADED FOR PROJECT: ${activeProjectName}`, timestamp: ts() },
+              ...loadedMsgs,
+            ],
           }));
         }
       });
-  }, [activeChatId]);
+  }, [activeChatId, activeProjectName]);
 
   // Fetch structured facts (MemPalace) from Supabase
   useEffect(() => {
-    if (!activeProject || !supabase) return;
+    if (!activeProjectId || !supabase) return;
     supabase
       .from('project_memories')
       .select('*')
-      .eq('project_id', activeProject.id)
+      .eq('project_id', activeProjectId)
       .then(({ data }) => {
         if (data) setProjectMemories(data);
       });
-  }, [activeProject?.id]);
+  }, [activeProjectId]);
 
   // Fetch OpenClaw personas from Supabase
   useEffect(() => {
-    if (!activeProject || !supabase) return;
+    if (!activeProjectId || !supabase) return;
     supabase
       .from('project_personas')
       .select('*')
-      .eq('project_id', activeProject.id)
+      .eq('project_id', activeProjectId)
       .then(({ data }) => {
         if (data) setProjectPersonas(data);
         else setProjectPersonas([]);
       });
-  }, [activeProject?.id]);
+  }, [activeProjectId]);
 
   // Fetch multi-agent overlays from Supabase
   useEffect(() => {
-    if (!activeProject || !supabase) return;
+    if (!activeProjectId || !supabase) return;
     supabase
       .from('project_agents')
       .select('*')
-      .eq('project_id', activeProject.id)
+      .eq('project_id', activeProjectId)
       .then(({ data }) => {
         if (data) setProjectAgents(data);
         else setProjectAgents([]);
       });
-  }, [activeProject?.id]);
+  }, [activeProjectId]);
 
-  // Unified Markdown editor content resolver (based on workspaceMode selection)
-  useEffect(() => {
+  // Unified Markdown editor content resolver (based on workspaceMode selection).
+  // The resolved value is derived; user edits live in personaDraft until the
+  // selection or the underlying record changes.
+  const resolvedPersonaContent = useMemo(() => {
     if (workspaceMode === 'project') {
-      const found = projectPersonas.find(p => p.filename === selectedPersonaFile);
-      setPersonaContent(found?.content || '');
-    } else {
-      const agent = projectAgents.find(a => a.id === workspaceMode);
-      if (agent) {
-        if (selectedPersonaFile === 'IDENTITY.md') setPersonaContent(agent.identity_md || '');
-        else if (selectedPersonaFile === 'SOUL.md') setPersonaContent(agent.soul_md || '');
-        else if (selectedPersonaFile === 'AGENTS.md') setPersonaContent(agent.agents_md || '');
-      } else {
-        setPersonaContent('');
-      }
+      return projectPersonas.find(p => p.filename === selectedPersonaFile)?.content || '';
     }
+    const agent = projectAgents.find(a => a.id === workspaceMode);
+    if (!agent) return '';
+    if (selectedPersonaFile === 'IDENTITY.md') return agent.identity_md || '';
+    if (selectedPersonaFile === 'SOUL.md') return agent.soul_md || '';
+    return agent.agents_md || '';
   }, [workspaceMode, selectedPersonaFile, projectPersonas, projectAgents]);
+
+  const personaSelectionKey = `${workspaceMode}|${selectedPersonaFile}`;
+  const [prevPersonaKey, setPrevPersonaKey] = useState(personaSelectionKey);
+  const [prevResolvedPersona, setPrevResolvedPersona] = useState(resolvedPersonaContent);
+  if (prevPersonaKey !== personaSelectionKey || prevResolvedPersona !== resolvedPersonaContent) {
+    setPrevPersonaKey(personaSelectionKey);
+    setPrevResolvedPersona(resolvedPersonaContent);
+    setPersonaDraft(null);
+  }
+  const personaContent = personaDraft ?? resolvedPersonaContent;
 
   // Auto-scroll chat
   useEffect(() => {
@@ -402,20 +457,6 @@ export default function Home() {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [currentMessages]);
-
-  // Init system message when switching chats
-  useEffect(() => {
-    if (!activeProject || !activeChatId) return;
-    if (!messagesByChat[activeChatId]) {
-      setMessagesByChat(prev => ({
-        ...prev,
-        [activeChatId]: [
-          { role: 'system', text: `[ SYS_INIT ] CONTEXT ENGINE LOADED FOR PROJECT: ${activeProject.name}`, timestamp: ts() },
-        ],
-      }));
-    }
-    setGraphRefresh(prev => prev + 1);
-  }, [activeProject?.id, activeChatId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const addMessage = useCallback((chatId: string, msg: Message) => {
     setMessagesByChat(prev => ({
@@ -449,6 +490,7 @@ export default function Home() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           projectId: activeProject.id,
+          projectName: activeProject.name,
           chatId: activeChatId,
           message: userMsgText,
           history: currentMessages, // Send previous messages from client state
@@ -462,7 +504,13 @@ export default function Home() {
 
       const data = await res.json();
 
-      if (data.success) {
+      if (data.success && !data.response) {
+        addMessage(activeChatId, {
+          role: 'system',
+          text: '[ ERROR ] Model returned an empty response. Retry or switch models.',
+          timestamp: ts(),
+        });
+      } else if (data.success) {
         addMessage(activeChatId, {
           role: 'assistant',
           text: data.response,
@@ -503,10 +551,10 @@ export default function Home() {
           timestamp: ts(),
         });
       }
-    } catch (e: any) {
+    } catch (e) {
       addMessage(activeChatId, {
         role: 'system',
-        text: `[ FATAL ] Failed to reach context engine. (${e.message})`,
+        text: `[ FATAL ] Failed to reach context engine. (${e instanceof Error ? e.message : 'unknown error'})`,
         timestamp: ts(),
       });
     }
@@ -534,28 +582,27 @@ export default function Home() {
   const handleCreateProject = async () => {
     if (!newProjectName.trim() || !supabase) return;
     try {
-      const { data, error } = await supabase.from('projects').insert({
+      const { data } = await supabase.from('projects').insert({
         name: newProjectName.trim()
       }).select().single();
 
       if (data) {
-        setProjects(prev => [...prev, data]);
-        setActiveProjectIdx(projects.length);
-        setNewProjectName('');
-        setShowNewProject(false);
-
-        // Seed project personas with OpenClaw templates
+        // Seed personas and the default chat BEFORE activating the project, so the
+        // chats/personas fetch effects triggered by activation find them.
         await supabase.from('project_personas').insert([
           { project_id: data.id, filename: 'IDENTITY.md', content: DEFAULT_IDENTITY, updated_at: new Date().toISOString() },
           { project_id: data.id, filename: 'SOUL.md', content: DEFAULT_SOUL, updated_at: new Date().toISOString() },
           { project_id: data.id, filename: 'AGENTS.md', content: DEFAULT_AGENTS, updated_at: new Date().toISOString() },
         ]);
-        
-        // Also create a default "Legacy Chat" for the new project
         await supabase.from('chats').insert({
           project_id: data.id,
           name: 'Main Chat'
         });
+
+        setProjects(prev => [...prev, data]);
+        setActiveProjectIdx(projects.length);
+        setNewProjectName('');
+        setShowNewProject(false);
       }
     } catch (e) {
       console.error('Create project failed:', e);
@@ -566,7 +613,7 @@ export default function Home() {
   const handleAddFact = async () => {
     if (!newFact.trim() || !activeProject || !supabase) return;
     try {
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from('project_memories')
         .insert({
           project_id: activeProject.id,
@@ -578,7 +625,7 @@ export default function Home() {
         setProjectMemories(prev => [...prev, ...data]);
         setNewFact('');
       }
-    } catch (e) {}
+    } catch {}
   };
 
   const handleDeleteFact = async (factId: string) => {
@@ -591,7 +638,7 @@ export default function Home() {
       if (!error) {
         setProjectMemories(prev => prev.filter(f => f.id !== factId));
       }
-    } catch (e) {}
+    } catch {}
   };
 
   // OpenClaw unified persona save
@@ -662,7 +709,7 @@ export default function Home() {
           }
         }
       }
-    } catch (e) {}
+    } catch {}
     setSavingPersona(false);
   };
 
@@ -671,7 +718,7 @@ export default function Home() {
     if (!newAgentName.trim() || !activeProject || !supabase) return;
     const cleanAgentName = newAgentName.trim().toLowerCase().replace(/\s+/g, '_');
     try {
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from('project_agents')
         .insert({
           project_id: activeProject.id,
@@ -711,9 +758,8 @@ export default function Home() {
           }
         }
       }
-    } catch (e) {}
+    } catch {}
   };
-
 
 
   // Proactive execution methods
@@ -806,7 +852,7 @@ export default function Home() {
   };
 
   const renderMessageContent = (msgText: string) => {
-    let elements: React.ReactNode[] = [];
+    const elements: React.ReactNode[] = [];
     let currentIndex = 0;
     
     // We match PROPOSE_EDIT, ADD_FACT, CREATE_AGENT
@@ -876,6 +922,74 @@ export default function Home() {
 
 
   const roomFacts = projectMemories.filter(pm => pm.room_name === activeRoom);
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!supabase || loggingIn) return;
+    setLoggingIn(true);
+    setLoginError('');
+    const { error } = await supabase.auth.signInWithPassword({
+      email: loginEmail.trim(),
+      password: loginPassword,
+    });
+    if (error) setLoginError(error.message.toUpperCase());
+    setLoggingIn(false);
+  };
+
+  const handleLogout = async () => {
+    if (!supabase) return;
+    await supabase.auth.signOut();
+  };
+
+  if (!authReady) {
+    return (
+      <div className="app-shell" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
+        <samp style={{ color: 'var(--fg-dim)' }}>[ BOOTING CONTEXT ENGINE... ]</samp>
+      </div>
+    );
+  }
+
+  if (!session) {
+    return (
+      <div className="app-shell" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
+        <form onSubmit={handleLogin} style={{ border: '1px solid var(--grid-thick)', padding: '32px', width: '360px', display: 'flex', flexDirection: 'column', gap: '16px', background: 'var(--bg-raised, rgba(255,255,255,0.02))' }}>
+          <div>
+            <h1 style={{ margin: 0 }}>NB</h1>
+            <samp className="brand-sub">{'/// OPERATOR LOGIN'}</samp>
+          </div>
+          {!supabase && (
+            <samp style={{ color: 'var(--red)' }}>[ SUPABASE NOT CONFIGURED — SET ENV VARS ]</samp>
+          )}
+          <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <samp className="section-label">[ EMAIL ]</samp>
+            <input
+              type="email"
+              value={loginEmail}
+              onChange={e => setLoginEmail(e.target.value)}
+              autoComplete="email"
+              required
+              style={{ background: 'transparent', border: '1px solid var(--grid-thick)', color: 'var(--fg)', padding: '8px', fontFamily: 'inherit' }}
+            />
+          </label>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <samp className="section-label">[ PASSWORD ]</samp>
+            <input
+              type="password"
+              value={loginPassword}
+              onChange={e => setLoginPassword(e.target.value)}
+              autoComplete="current-password"
+              required
+              style={{ background: 'transparent', border: '1px solid var(--grid-thick)', color: 'var(--fg)', padding: '8px', fontFamily: 'inherit' }}
+            />
+          </label>
+          {loginError && <samp style={{ color: 'var(--red)' }}>[ {loginError} ]</samp>}
+          <button type="submit" className="tab-btn" disabled={loggingIn || !supabase} style={{ padding: '10px' }}>
+            {loggingIn ? '[ AUTHENTICATING... ]' : '[ ENTER >>> ]'}
+          </button>
+        </form>
+      </div>
+    );
+  }
 
   return (
     <>
@@ -991,6 +1105,7 @@ export default function Home() {
                   style={{ border: '1px solid var(--grid-thick)', width: '100%', padding: '6px' }}
                   value={newProjectName}
                   onChange={e => setNewProjectName(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') handleCreateProject(); }}
                   placeholder="PROJECT NAME..."
                   spellCheck={false}
                 />
@@ -1017,6 +1132,9 @@ export default function Home() {
             <div className="footer-actions" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               <button className="settings-btn hide-on-min" onClick={() => setSettingsOpen(true)}>
                 [ SETTINGS ]
+              </button>
+              <button className="settings-btn hide-on-min" onClick={handleLogout}>
+                [ LOGOUT ]
               </button>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <div 
@@ -1321,7 +1439,7 @@ export default function Home() {
                   }}
                   rows={20}
                   value={personaContent}
-                  onChange={e => setPersonaContent(e.target.value)}
+                  onChange={e => setPersonaDraft(e.target.value)}
                   placeholder={`Write your markdown instructions for ${selectedPersonaFile} here...`}
                   spellCheck={false}
                 />

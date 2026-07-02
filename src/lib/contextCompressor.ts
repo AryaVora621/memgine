@@ -21,23 +21,23 @@ export function compressContext(content: string, type: 'code' | 'text' | 'json')
       try {
         const parsed = JSON.parse(content);
         // Truncate arrays larger than 5 items
-        const truncateArrays = (obj: any): any => {
+        const truncateArrays = (obj: unknown): unknown => {
           if (Array.isArray(obj)) {
             if (obj.length > 5) {
               return [...obj.slice(0, 5), `... ${obj.length - 5} more items`];
             }
             return obj.map(truncateArrays);
           } else if (obj !== null && typeof obj === 'object') {
-            const newObj: any = {};
-            for (const key in obj) {
-              newObj[key] = truncateArrays(obj[key]);
+            const newObj: Record<string, unknown> = {};
+            for (const [key, value] of Object.entries(obj)) {
+              newObj[key] = truncateArrays(value);
             }
             return newObj;
           }
           return obj;
         };
         return JSON.stringify(truncateArrays(parsed));
-      } catch (e) {
+      } catch {
         return content;
       }
       

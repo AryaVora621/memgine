@@ -4,9 +4,10 @@ import { callProvider, type ChatMessage } from '@/lib/providers';
 
 export async function POST(req: Request) {
   try {
-    const { 
-      projectId, 
-      message, 
+    const {
+      projectId,
+      projectName,
+      message,
       history = [], 
       model, 
       projectMemories, 
@@ -26,7 +27,7 @@ export async function POST(req: Request) {
     if (projectMemories && Array.isArray(projectMemories) && projectMemories.length > 0) {
       memoriesContext = `\n\n<MEMORY_PALACE_CONTEXT>\n`;
       const rooms: Record<string, string[]> = {};
-      projectMemories.forEach((pm: any) => {
+      projectMemories.forEach((pm: { room_name?: string; fact_content: string }) => {
         const roomName = pm.room_name || 'GENERAL';
         if (!rooms[roomName]) rooms[roomName] = [];
         rooms[roomName].push(pm.fact_content);
@@ -59,7 +60,7 @@ export async function POST(req: Request) {
     // Build OpenClaw unified identity context from Supabase Personas
     const activePersonas: Record<string, string> = {};
     if (projectPersonas && Array.isArray(projectPersonas)) {
-      projectPersonas.forEach((p: any) => {
+      projectPersonas.forEach((p: { filename: string; content: string }) => {
         activePersonas[p.filename] = p.content;
       });
     }
@@ -128,10 +129,10 @@ To define a new sub-agent that you can delegate to later, output:
 
     const systemPrompt: ChatMessage = {
       role: 'system',
-      content: `You are an AI assistant for the project "${projectId}". You have access to the full conversation history for this project. Be helpful, precise, and remember prior context from this project's sessions.${openClawContext}${memoriesContext}${proactiveCapabilities}`,
+      content: `You are an AI assistant for the project "${projectName || projectId}". You have access to the full conversation history for this project. Be helpful, precise, and remember prior context from this project's sessions.${openClawContext}${memoriesContext}${proactiveCapabilities}`,
     };
 
-    const formattedHistory: ChatMessage[] = history.map((m: any) => ({
+    const formattedHistory: ChatMessage[] = history.map((m: { role: ChatMessage['role']; content?: string; text?: string }) => ({
       role: m.role,
       content: m.content || m.text || ''
     }));
@@ -153,10 +154,10 @@ To define a new sub-agent that you can delegate to later, output:
       tokensUsed: result.tokensUsed,
       agentName: currentAgentName
     });
-  } catch (error: any) {
+  } catch (error) {
     return NextResponse.json({
       success: false,
-      error: error.message || 'Unknown error',
+      error: error instanceof Error ? error.message : 'Unknown error',
     }, { status: 500 });
   }
 }

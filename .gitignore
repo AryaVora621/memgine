@@ -44,3 +44,5 @@ next-env.d.ts
 .notebook_config/
 .notebook_memories/
 
+.playwright-mcp/
+graph-tab.png

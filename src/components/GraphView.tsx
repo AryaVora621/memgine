@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback } from 'react';
 import dynamic from 'next/dynamic';
+import { supabase } from '@/lib/supabaseClient';
 
 const ForceGraph2D = dynamic(() => import('react-force-graph-2d'), { ssr: false });
 
@@ -33,24 +34,58 @@ const GROUP_COLORS: Record<number, string> = {
   3: '#666666',  // system — dim
 };
 
+// Shape the force-graph library hands to canvas callbacks; our GraphNode data
+// plus the runtime coordinates it injects.
+type FGNode = Partial<Omit<GraphNode, 'id'>> & { x?: number; y?: number; id?: string | number };
+
 export default function GraphView({ projectId, refreshKey }: GraphViewProps) {
-  const [mounted, setMounted] = useState(false);
   const [graphData, setGraphData] = useState<{ nodes: GraphNode[]; links: GraphLink[] }>({ nodes: [], links: [] });
   const [hovered, setHovered] = useState<GraphNode | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [dims, setDims] = useState({ w: 800, h: 600 });
 
-  useEffect(() => { setMounted(true); }, []);
-
-  // Fetch real memory graph data
+  // Build the memory graph straight from Supabase: one node per message,
+  // linked by explicit parent_id or by conversation order within a chat.
   useEffect(() => {
-    if (!projectId) return;
-    fetch(`/api/memory?projectId=${encodeURIComponent(projectId)}`)
-      .then(r => r.json())
-      .then(data => {
-        if (data.nodes) setGraphData(data);
-      })
-      .catch(() => {});
+    if (!projectId || !supabase) return;
+    supabase
+      .from('memories')
+      .select('id, role, content, timestamp, parent_id, chat_id')
+      .eq('project_id', projectId)
+      .order('timestamp', { ascending: true })
+      .then(({ data }) => {
+        if (!data) return;
+        const rows = data as {
+          id: string;
+          role: string;
+          content: string | null;
+          timestamp: string;
+          parent_id: string | null;
+          chat_id: string | null;
+        }[];
+        const nodes: GraphNode[] = rows.map(m => ({
+          id: m.id,
+          label: (m.content || '').substring(0, 24),
+          role: m.role,
+          group: m.role === 'user' ? 1 : m.role === 'assistant' ? 2 : 3,
+          val: 3,
+          timestamp: m.timestamp,
+          fullContent: m.content || '',
+        }));
+        const ids = new Set(rows.map(m => m.id));
+        const links: GraphLink[] = [];
+        const lastByChat: Record<string, string> = {};
+        for (const m of rows) {
+          const chatKey = m.chat_id || 'none';
+          if (m.parent_id && ids.has(m.parent_id)) {
+            links.push({ source: m.parent_id, target: m.id });
+          } else if (lastByChat[chatKey]) {
+            links.push({ source: lastByChat[chatKey], target: m.id });
+          }
+          lastByChat[chatKey] = m.id;
+        }
+        setGraphData({ nodes, links });
+      });
   }, [projectId, refreshKey]);
 
   // Responsive sizing
@@ -63,30 +98,30 @@ export default function GraphView({ projectId, refreshKey }: GraphViewProps) {
     });
     obs.observe(containerRef.current);
     return () => obs.disconnect();
-  }, [mounted]);
+  }, []);
 
-  const paintNode = useCallback((node: any, ctx: CanvasRenderingContext2D) => {
+  const paintNode = useCallback((node: FGNode, ctx: CanvasRenderingContext2D) => {
     const size = node.val || 3;
-    const color = GROUP_COLORS[node.group as number] || '#EAEAEA';
+    const color = GROUP_COLORS[node.group ?? 0] || '#EAEAEA';
+    const x = node.x ?? 0;
+    const y = node.y ?? 0;
 
     // Square nodes — brutalist geometry
     ctx.fillStyle = color;
-    ctx.fillRect(node.x - size, node.y - size, size * 2, size * 2);
+    ctx.fillRect(x - size, y - size, size * 2, size * 2);
 
     ctx.strokeStyle = '#333333';
     ctx.lineWidth = 0.5;
-    ctx.strokeRect(node.x - size, node.y - size, size * 2, size * 2);
+    ctx.strokeRect(x - size, y - size, size * 2, size * 2);
 
     // Label
-    const label = node.label || node.id.substring(0, 8);
+    const label = node.label || String(node.id ?? '').substring(0, 8);
     ctx.font = '2.5px JetBrains Mono, monospace';
     ctx.fillStyle = '#999999';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
-    ctx.fillText(label.toUpperCase(), node.x, node.y + size + 2);
+    ctx.fillText(label.toUpperCase(), x, y + size + 2);
   }, []);
-
-  if (!mounted) return null;
 
   const isEmpty = graphData.nodes.length === 0;
 
@@ -103,12 +138,12 @@ export default function GraphView({ projectId, refreshKey }: GraphViewProps) {
             graphData={graphData}
             nodeLabel=""
             nodeCanvasObject={paintNode}
-            nodePointerAreaPaint={(node: any, color: string, ctx: CanvasRenderingContext2D) => {
+            nodePointerAreaPaint={(node: FGNode, color: string, ctx: CanvasRenderingContext2D) => {
               const size = (node.val || 3) + 2;
               ctx.fillStyle = color;
-              ctx.fillRect(node.x - size, node.y - size, size * 2, size * 2);
+              ctx.fillRect((node.x ?? 0) - size, (node.y ?? 0) - size, size * 2, size * 2);
             }}
-            onNodeHover={(node: any) => setHovered(node || null)}
+            onNodeHover={(node: FGNode | null) => setHovered((node as GraphNode) || null)}
             linkColor={() => '#333333'}
             linkWidth={1}
             linkDirectionalArrowLength={4}
