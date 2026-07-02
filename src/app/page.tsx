@@ -60,11 +60,26 @@ const MODELS = [
   { id: 'gemini-3.5-flash', label: 'GEMINI 3.5 FLASH (NATIVE)' },
   { id: 'gemini-3.1-pro-preview', label: 'GEMINI 3.1 PRO (NATIVE)' },
 
-  // OpenRouter (Free Models)
+  // OpenRouter free tier (shared pools; can hit upstream rate limits at peak)
   { id: 'nvidia/nemotron-3-ultra-550b-a55b:free', label: 'OR / NEMOTRON ULTRA 550B (FREE)' },
+  { id: 'nvidia/nemotron-3-super-120b-a12b:free', label: 'OR / NEMOTRON SUPER 120B (FREE)' },
   { id: 'google/gemma-4-31b-it:free', label: 'OR / GEMMA 4 31B (FREE)' },
-  { id: 'nousresearch/hermes-3-llama-3.1-405b:free', label: 'OR / HERMES 3 405B (FREE)' },
+  { id: 'qwen/qwen3-next-80b-a3b-instruct:free', label: 'OR / QWEN3 NEXT 80B (FREE)' },
+  { id: 'qwen/qwen3-coder:free', label: 'OR / QWEN3 CODER (FREE)' },
   { id: 'openai/gpt-oss-120b:free', label: 'OR / GPT OSS 120B (FREE)' },
+  { id: 'meta-llama/llama-3.3-70b-instruct:free', label: 'OR / LLAMA 3.3 70B (FREE)' },
+
+  // OpenRouter budget tier (reliable; well under $0.5/M output)
+  { id: 'deepseek/deepseek-v4-flash', label: 'OR / DEEPSEEK V4 FLASH ($)' },
+  { id: 'openai/gpt-oss-120b', label: 'OR / GPT OSS 120B ($)' },
+  { id: 'google/gemini-3.1-flash-lite', label: 'OR / GEMINI 3.1 FLASH LITE ($)' },
+  { id: 'meta-llama/llama-3.3-70b-instruct', label: 'OR / LLAMA 3.3 70B ($)' },
+
+  // OpenRouter quality tier
+  { id: 'deepseek/deepseek-v4-pro', label: 'OR / DEEPSEEK V4 PRO ($$)' },
+  { id: 'moonshotai/kimi-k2.5', label: 'OR / KIMI K2.5 ($$)' },
+  { id: 'z-ai/glm-5', label: 'OR / GLM-5 ($$)' },
+
   { id: 'openrouter/auto', label: 'OR / AUTO-ROUTER' },
 
   // Local Models
