@@ -958,18 +958,23 @@ export default function Home() {
                 <span className="profile-name truncate" style={{ display: sidebarWidth <= 60 ? 'none' : 'block' }}>[ GLOBAL_SYNC_ENABLED ]</span>
               </div>
             </div>
-            <div className="footer-actions">
+            <div className="footer-actions" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               <button className="settings-btn hide-on-min" onClick={() => setSettingsOpen(true)}>
                 [ SETTINGS ]
               </button>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '8px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: '4px' }}>
-                  <div 
-                    className="status-dot" 
-                    title={supabase ? "SYNC LIVE" : "OFFLINE"} 
-                    style={{ backgroundColor: supabase ? 'var(--green)' : 'var(--red)' }} 
-                  />
-                </div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <div 
+                  className="status-dot" 
+                  title={loading ? "PROCESSING..." : supabase ? "SYNC LIVE" : "OFFLINE"} 
+                  style={{ 
+                    backgroundColor: loading ? 'var(--yellow, #fbbf24)' : supabase ? 'var(--green)' : 'var(--red)',
+                    boxShadow: loading 
+                      ? '0 0 6px var(--yellow, #fbbf24), 0 0 12px rgba(251, 191, 36, 0.3)' 
+                      : supabase 
+                        ? '0 0 6px var(--green), 0 0 12px rgba(74, 246, 38, 0.3)' 
+                        : '0 0 6px var(--red), 0 0 12px rgba(255, 68, 68, 0.3)'
+                  }} 
+                />
               </div>
             </div>
           </footer>
