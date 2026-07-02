@@ -838,10 +838,10 @@ export default function Home() {
             <ul className="dir-list">
               {projects.map((proj, i) => (
                 <li key={proj.id}>
-                  <button
+                  <div
                     className={`dir-btn ${i === activeProjectIdx ? 'active' : ''}`}
                     onClick={() => setActiveProjectIdx(i)}
-                    style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', padding: '8px 12px' }}
+                    style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', padding: '8px 12px', cursor: 'pointer' }}
                   >
                     <div style={{ display: 'flex', width: '100%', justifyContent: 'space-between', alignItems: 'center' }}>
                       <span>
@@ -861,7 +861,7 @@ export default function Home() {
                         <span className="dir-index">[{String(i + 1).padStart(2, '0')}]</span>
                       </div>
                     </div>
-                  </button>
+                  </div>
                   {i === activeProjectIdx && (
                     <ul style={{ listStyle: 'none', paddingLeft: '24px', margin: '4px 0', width: '100%' }}>
                       {chats.map(chat => (
@@ -963,9 +963,12 @@ export default function Home() {
                 [ SETTINGS ]
               </button>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '8px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                  <div className="status-dot" title="CONNECTED" style={{ backgroundColor: 'var(--green)' }} />
-                  <span className="hide-on-min" style={{ fontSize: '10px', color: 'var(--green)' }}>SUPABASE_LIVE</span>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: '4px' }}>
+                  <div 
+                    className="status-dot" 
+                    title={supabase ? "SYNC LIVE" : "OFFLINE"} 
+                    style={{ backgroundColor: supabase ? 'var(--green)' : 'var(--red)' }} 
+                  />
                 </div>
               </div>
             </div>
