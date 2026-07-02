@@ -293,6 +293,18 @@ export default function Home() {
   const [sidebarWidth, setSidebarWidth] = useState(260);
   const isDraggingRef = useRef(false);
 
+  // Mobile layout: sidebar becomes an overlay drawer below 768px
+  const isMobile = useSyncExternalStore(
+    (cb) => {
+      const mq = window.matchMedia('(max-width: 768px)');
+      mq.addEventListener('change', cb);
+      return () => mq.removeEventListener('change', cb);
+    },
+    () => window.matchMedia('(max-width: 768px)').matches,
+    () => false
+  );
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+
   useEffect(() => {
     const savedColor = localStorage.getItem('memgine-theme-color');
     if (savedColor) {
@@ -973,7 +985,7 @@ export default function Home() {
   if (!session) {
     return (
       <div className="app-shell" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
-        <form onSubmit={handleLogin} style={{ border: '1px solid var(--grid-thick)', padding: '32px', width: '360px', display: 'flex', flexDirection: 'column', gap: '16px', background: 'var(--bg-raised, rgba(255,255,255,0.02))' }}>
+        <form onSubmit={handleLogin} style={{ border: '1px solid var(--grid-thick)', padding: '32px', width: '360px', maxWidth: '92vw', display: 'flex', flexDirection: 'column', gap: '16px', background: 'var(--bg-raised, rgba(255,255,255,0.02))' }}>
           <div>
             <h1 style={{ margin: 0 }}>NB</h1>
             <samp className="brand-sub">{'/// OPERATOR LOGIN'}</samp>
@@ -1014,9 +1026,12 @@ export default function Home() {
 
   return (
     <>
-      <div className="app-shell" style={{ gridTemplateColumns: `${sidebarWidth}px 4px 1fr` }}>
+      <div className="app-shell" style={{ gridTemplateColumns: isMobile ? '1fr' : `${sidebarWidth}px 4px 1fr` }}>
         {/* ── SIDEBAR ── */}
-        <nav className={`sidebar ${sidebarWidth <= 60 ? 'sidebar-minimized' : ''}`}>
+        {isMobile && mobileNavOpen && (
+          <div className="mobile-backdrop" onClick={() => setMobileNavOpen(false)} />
+        )}
+        <nav className={`sidebar ${!isMobile && sidebarWidth <= 60 ? 'sidebar-minimized' : ''} ${isMobile ? 'sidebar-mobile' : ''} ${isMobile && mobileNavOpen ? 'sidebar-mobile-open' : ''}`}>
           <div className="sidebar-brand crosshairs">
             <h1>NB</h1>
             <samp className="brand-sub">{"/// CONTEXT ENGINE"}</samp>
@@ -1031,7 +1046,7 @@ export default function Home() {
                 <li key={proj.id}>
                   <div
                     className={`dir-btn ${i === activeProjectIdx ? 'active' : ''}`}
-                    onClick={() => setActiveProjectIdx(i)}
+                    onClick={() => { setActiveProjectIdx(i); }}
                     style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', padding: '8px 12px', cursor: 'pointer' }}
                   >
                     <div style={{ display: 'flex', width: '100%', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -1058,7 +1073,7 @@ export default function Home() {
                       {chats.map(chat => (
                         <li key={chat.id}>
                           <button
-                            onClick={() => setActiveChatId(chat.id)}
+                            onClick={() => { setActiveChatId(chat.id); if (isMobile) setMobileNavOpen(false); }}
                             style={{
                               width: '100%',
                               textAlign: 'left',
@@ -1175,17 +1190,29 @@ export default function Home() {
           </footer>
         </nav>
 
-        {/* ── GRID DIVIDER ── */}
-        <div 
-          className="grid-divider" 
-          onMouseDown={() => { isDraggingRef.current = true; document.body.style.cursor = 'col-resize'; }}
-          style={{ cursor: 'col-resize', background: 'var(--grid-thick)', zIndex: 50 }}
-        />
+        {/* ── GRID DIVIDER (desktop only) ── */}
+        {!isMobile && (
+          <div
+            className="grid-divider"
+            onMouseDown={() => { isDraggingRef.current = true; document.body.style.cursor = 'col-resize'; }}
+            style={{ cursor: 'col-resize', background: 'var(--grid-thick)', zIndex: 50 }}
+          />
+        )}
 
         {/* ── MAIN ── */}
         <main className="main">
           <header className="header-bar">
             <div className="model-display">
+              {isMobile && (
+                <button
+                  className="tab-btn"
+                  onClick={() => setMobileNavOpen(o => !o)}
+                  aria-label="Toggle navigation"
+                  style={{ padding: '4px 10px' }}
+                >
+                  ≡
+                </button>
+              )}
               <samp className="model-label">MODEL:</samp>
               <select
                 className="model-select"

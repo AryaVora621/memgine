@@ -1154,3 +1154,73 @@ a { color: inherit; text-decoration: none; }
 .markdown-body code { background: rgba(255,255,255,0.1); padding: 2px 4px; border-radius: 2px; font-family: inherit; }
 .markdown-body pre { background: rgba(0,0,0,0.3); padding: 8px; overflow-x: auto; margin-bottom: 8px; border-left: 2px solid var(--grid-thick); }
 .markdown-body pre code { background: none; padding: 0; border-radius: 0; }
+
+/* ── MOBILE (≤768px): sidebar becomes an overlay drawer ── */
+@media (max-width: 768px) {
+  .sidebar.sidebar-mobile {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: min(82vw, 320px);
+    z-index: 300;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+    border-right: 1px solid var(--grid-thick);
+    background: var(--bg);
+  }
+
+  .sidebar.sidebar-mobile-open {
+    transform: translateX(0);
+  }
+
+  .mobile-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.65);
+    z-index: 250;
+  }
+
+  .header-bar {
+    padding: 8px 10px;
+  }
+
+  .model-select {
+    max-width: 46vw;
+  }
+
+  .tab-group {
+    width: 100%;
+    display: flex;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .tab-btn {
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  /* Palace: rooms column becomes a horizontal strip so it can't overlap the header */
+  .palace-container {
+    flex-direction: column;
+    flex-wrap: nowrap;
+    overflow-y: auto;
+  }
+
+  .palace-rooms {
+    flex: none;
+    width: 100%;
+    flex-direction: row;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    border-right: none;
+    padding: 8px 0;
+  }
+
+  .room-btn {
+    white-space: nowrap;
+    width: auto;
+    flex-shrink: 0;
+  }
+}
