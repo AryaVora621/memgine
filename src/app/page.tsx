@@ -468,6 +468,23 @@ export default function Home() {
     setLoading(false);
   };
 
+  const handleDeleteProject = async (projectId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!supabase) return;
+    
+    if (confirm('Are you sure you want to delete this project and all its data?')) {
+      const { error } = await supabase.from('projects').delete().eq('id', projectId);
+      if (!error) {
+        setProjects(prev => prev.filter(p => p.id !== projectId));
+        if (activeProject?.id === projectId) {
+          setActiveProjectIdx(0);
+        }
+      } else {
+        alert('Failed to delete project: ' + error.message);
+      }
+    }
+  };
+
   const handleCreateProject = async () => {
     if (!newProjectName.trim() || !supabase) return;
     try {
@@ -826,12 +843,23 @@ export default function Home() {
                     onClick={() => setActiveProjectIdx(i)}
                     style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', padding: '8px 12px' }}
                   >
-                    <div style={{ display: 'flex', width: '100%', justifyContent: 'space-between' }}>
+                    <div style={{ display: 'flex', width: '100%', justifyContent: 'space-between', alignItems: 'center' }}>
                       <span>
                         <span className="dir-prefix">{i === activeProjectIdx ? '>>>' : '---'}</span>
                         <span>{proj.name}</span>
                       </span>
-                      <span className="dir-index">[{String(i + 1).padStart(2, '0')}]</span>
+                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                        {i === activeProjectIdx && (
+                          <button
+                            onClick={(e) => handleDeleteProject(proj.id, e)}
+                            style={{ background: 'transparent', border: 'none', color: 'var(--red)', cursor: 'pointer', fontSize: '10px' }}
+                            title="Delete Project"
+                          >
+                            [X]
+                          </button>
+                        )}
+                        <span className="dir-index">[{String(i + 1).padStart(2, '0')}]</span>
+                      </div>
                     </div>
                   </button>
                   {i === activeProjectIdx && (
@@ -846,14 +874,20 @@ export default function Home() {
                               padding: '4px 8px',
                               background: 'transparent',
                               border: 'none',
-                              color: activeChatId === chat.id ? 'var(--red)' : 'var(--fg)',
+                              color: activeChatId === chat.id ? 'var(--bg)' : 'var(--fg)',
+                              backgroundColor: activeChatId === chat.id ? 'var(--fg)' : 'transparent',
                               cursor: 'pointer',
                               fontFamily: 'monospace',
                               fontSize: '12px',
-                              opacity: activeChatId === chat.id ? 1 : 0.7
+                              opacity: 1,
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                              borderRadius: '2px'
                             }}
                           >
-                            {activeChatId === chat.id ? '> ' : '  '}{chat.name}
+                            <span>{activeChatId === chat.id ? '> ' : '  '}{chat.name}</span>
+                            {activeChatId === chat.id && <span style={{ fontSize: '10px' }}>[ACTIVE]</span>}
                           </button>
                         </li>
                       ))}
