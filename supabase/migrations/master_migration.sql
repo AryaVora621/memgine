@@ -1,7 +1,7 @@
 -- 1. Create chats table if it doesn't exist (without user_id)
 CREATE TABLE IF NOT EXISTS public.chats (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  project_id TEXT REFERENCES public.projects(id) ON DELETE CASCADE,
+  project_id UUID REFERENCES public.projects(id) ON DELETE CASCADE,
   name TEXT NOT NULL DEFAULT 'New Chat',
   created_at TIMESTAMPTZ DEFAULT now()
 );
