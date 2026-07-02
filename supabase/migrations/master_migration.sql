@@ -25,7 +25,7 @@ ALTER TABLE public.project_memories DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.project_personas DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.project_agents DISABLE ROW LEVEL SECURITY;
 
--- 4. Drop user_id from all legacy tables CASCADE (drops attached RLS policies)
+-- 4. Drop user_id and attached policies
 ALTER TABLE public.projects DROP COLUMN IF EXISTS user_id CASCADE;
 ALTER TABLE public.memories DROP COLUMN IF EXISTS user_id CASCADE;
 ALTER TABLE public.project_memories DROP COLUMN IF EXISTS user_id CASCADE;
