@@ -144,7 +144,7 @@ To define a new sub-agent that you can delegate to later, output:
     const messagesForAI: ChatMessage[] = [systemPrompt, ...formattedHistory];
 
     // Call the actual AI provider
-    const selectedModel = model || settings.defaultModel || 'claude-sonnet-4-20250514';
+    const selectedModel = model || settings.defaultModel || 'claude-5-sonnet-20260630';
     const result = await callProvider(messagesForAI, selectedModel, settings.apiKeys);
 
     return NextResponse.json({

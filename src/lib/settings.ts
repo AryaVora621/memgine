@@ -29,7 +29,7 @@ export interface AppSettings {
 const DEFAULT_SETTINGS: AppSettings = {
   apiKeys: {},
   projects: [],
-  defaultModel: 'claude-sonnet-4-20250514',
+  defaultModel: 'claude-5-sonnet-20260630',
 };
 function ensureConfigDir() {
   if (process.env.VERCEL === '1') return;

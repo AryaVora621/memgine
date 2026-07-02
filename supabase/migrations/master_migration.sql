@@ -7,27 +7,54 @@ CREATE TABLE IF NOT EXISTS public.chats (
 );
 
 -- 2. Link memories to chats (if not already done)
-DO $$ 
-BEGIN 
+DO $$
+BEGIN
   IF NOT EXISTS (
-    SELECT 1 FROM information_schema.columns 
+    SELECT 1 FROM information_schema.columns
     WHERE table_schema='public' AND table_name='memories' AND column_name='chat_id'
-  ) THEN 
+  ) THEN
     ALTER TABLE public.memories ADD COLUMN chat_id UUID REFERENCES public.chats(id) ON DELETE CASCADE;
-  END IF; 
+  END IF;
 END $$;
 
--- 3. Disable Row Level Security on all tables to allow Global Sync
-ALTER TABLE public.projects DISABLE ROW LEVEL SECURITY;
-ALTER TABLE public.chats DISABLE ROW LEVEL SECURITY;
-ALTER TABLE public.memories DISABLE ROW LEVEL SECURITY;
-ALTER TABLE public.project_memories DISABLE ROW LEVEL SECURITY;
-ALTER TABLE public.project_personas DISABLE ROW LEVEL SECURITY;
-ALTER TABLE public.project_agents DISABLE ROW LEVEL SECURITY;
-
--- 4. Drop user_id and attached policies
+-- 3. Drop legacy user_id columns and their attached policies
 ALTER TABLE public.projects DROP COLUMN IF EXISTS user_id CASCADE;
 ALTER TABLE public.memories DROP COLUMN IF EXISTS user_id CASCADE;
 ALTER TABLE public.project_memories DROP COLUMN IF EXISTS user_id CASCADE;
 ALTER TABLE public.project_personas DROP COLUMN IF EXISTS user_id CASCADE;
 ALTER TABLE public.project_agents DROP COLUMN IF EXISTS user_id CASCADE;
+
+-- 4. Single-operator security model.
+-- Public signups may be enabled on the Supabase project, so "any authenticated user"
+-- is not a safe boundary. Every table is restricted to the operator account.
+-- CHANGE THE EMAIL BELOW when deploying under a different account.
+CREATE OR REPLACE FUNCTION public.is_operator()
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+  SELECT COALESCE(auth.jwt()->>'email', '') = 'aryavora621@gmail.com';
+$$;
+
+ALTER TABLE public.projects ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.chats ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.memories ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.project_memories ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.project_personas ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.project_agents ENABLE ROW LEVEL SECURITY;
+
+DO $$
+DECLARE
+  t text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY['projects','chats','memories','project_memories','project_personas','project_agents']
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS "operator full access" ON public.%I', t);
+    EXECUTE format(
+      'CREATE POLICY "operator full access" ON public.%I FOR ALL TO authenticated USING (public.is_operator()) WITH CHECK (public.is_operator())',
+      t
+    );
+  END LOOP;
+END $$;
