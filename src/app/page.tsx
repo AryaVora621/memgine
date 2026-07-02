@@ -253,7 +253,7 @@ export default function Home() {
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (checkLocal() && !session) {
         supabase!.auth.signInWithPassword({
-          email: 'aryavora621@gmail.com',
+          email: 'aryavora21@gmail.com',
           password: 'Skibid!1234'
         }).then(({ data, error }) => {
           if (error) {
@@ -914,7 +914,7 @@ export default function Home() {
                       setAuthLoading(false);
                     });
                   }} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    <input name="email" type="email" defaultValue="aryavora621@gmail.com" placeholder="EMAIL" style={{ background: 'transparent', border: '1px solid var(--grid-thick)', color: 'var(--fg)', padding: '8px', fontFamily: 'monospace' }} />
+                    <input name="email" type="email" defaultValue="aryavora21@gmail.com" placeholder="EMAIL" style={{ background: 'transparent', border: '1px solid var(--grid-thick)', color: 'var(--fg)', padding: '8px', fontFamily: 'monospace' }} />
                     <input name="password" type="password" defaultValue="Skibid!1234" placeholder="PASSWORD" style={{ background: 'transparent', border: '1px solid var(--grid-thick)', color: 'var(--fg)', padding: '8px', fontFamily: 'monospace' }} />
                     <button type="submit" className="login-btn" style={{ padding: '8px', marginTop: '4px' }}>
                       [ DEV_LOGIN ]
