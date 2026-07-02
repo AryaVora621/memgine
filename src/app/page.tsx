@@ -149,7 +149,7 @@ export default function Home() {
   const [graphRefresh, setGraphRefresh] = useState(0);
 
   // Authentication
-  const [user, setUser] = useState<any>(null);
+
   const [authLoading, setAuthLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
 
@@ -237,49 +237,9 @@ export default function Home() {
     return true;
   });
 
-  // Listen for Supabase Auth state changes
-  useEffect(() => {
-    if (!supabase) {
-      setAuthLoading(false);
-      return;
-    }
-
-    const checkLocal = () => {
-      return window.location.hostname === 'localhost' || 
-             window.location.hostname === '127.0.0.1' || 
-             window.location.hostname.startsWith('192.168.');
-    };
-
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (checkLocal() && !session) {
-        supabase!.auth.signInWithPassword({
-          email: 'aryavora21@gmail.com',
-          password: 'Skibid!1234'
-        }).then(({ data, error }) => {
-          if (error) {
-            console.error('Dev auto-login failed:', error.message);
-          } else {
-            setUser(data.session?.user ?? null);
-          }
-          setAuthLoading(false);
-        });
-        return;
-      }
-      setUser(session?.user ?? null);
-      setAuthLoading(false);
-    });
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
-      setAuthLoading(false);
-    });
-
-    return () => subscription.unsubscribe();
-  }, []);
-
   // Fetch projects from Supabase
   useEffect(() => {
-    if (!user || !supabase) return;
+    if (!supabase) return;
     supabase
       .from('projects')
       .select('*')
@@ -293,11 +253,11 @@ export default function Home() {
           setActiveProjectIdx(-1);
         }
       });
-  }, [user]);
+  }, []);
 
   // Fetch chats for the active project
   useEffect(() => {
-    if (!activeProject || !user || !supabase) return;
+    if (!activeProject || !supabase) return;
     supabase
       .from('chats')
       .select('*')
@@ -312,7 +272,7 @@ export default function Home() {
           setActiveChatId(null);
         }
       });
-  }, [activeProject?.id, user]);
+  }, [activeProject?.id]);
 
   // Fetch memories for the active chat
   useEffect(() => {
@@ -339,7 +299,7 @@ export default function Home() {
 
   // Fetch structured facts (MemPalace) from Supabase
   useEffect(() => {
-    if (!activeProject || !user || !supabase) return;
+    if (!activeProject || !supabase) return;
     supabase
       .from('project_memories')
       .select('*')
@@ -347,11 +307,11 @@ export default function Home() {
       .then(({ data }) => {
         if (data) setProjectMemories(data);
       });
-  }, [activeProject?.id, user]);
+  }, [activeProject?.id]);
 
   // Fetch OpenClaw personas from Supabase
   useEffect(() => {
-    if (!activeProject || !user || !supabase) return;
+    if (!activeProject || !supabase) return;
     supabase
       .from('project_personas')
       .select('*')
@@ -360,11 +320,11 @@ export default function Home() {
         if (data) setProjectPersonas(data);
         else setProjectPersonas([]);
       });
-  }, [activeProject?.id, user]);
+  }, [activeProject?.id]);
 
   // Fetch multi-agent overlays from Supabase
   useEffect(() => {
-    if (!activeProject || !user || !supabase) return;
+    if (!activeProject || !supabase) return;
     supabase
       .from('project_agents')
       .select('*')
@@ -373,7 +333,7 @@ export default function Home() {
         if (data) setProjectAgents(data);
         else setProjectAgents([]);
       });
-  }, [activeProject?.id, user]);
+  }, [activeProject?.id]);
 
   // Unified Markdown editor content resolver (based on workspaceMode selection)
   useEffect(() => {
@@ -465,12 +425,11 @@ export default function Home() {
         setGraphRefresh(prev => prev + 1);
 
         // Upload both newly added messages to Supabase if logged in
-        if (user && supabase) {
+        if (supabase) {
           // Upload user message
           const { data: userDbMsg } = await supabase.from('memories').insert({
             project_id: activeProject.id,
             chat_id: activeChatId,
-            user_id: user.id,
             content: userMsgText,
             role: 'user',
             metadata: {},
@@ -483,7 +442,6 @@ export default function Home() {
             await supabase.from('memories').insert({
               project_id: activeProject.id,
               chat_id: activeChatId,
-              user_id: user.id,
               content: data.response,
               role: 'assistant',
               metadata: { model, agentName: data.agentName },
@@ -511,11 +469,10 @@ export default function Home() {
   };
 
   const handleCreateProject = async () => {
-    if (!newProjectName.trim() || !user || !supabase) return;
+    if (!newProjectName.trim() || !supabase) return;
     try {
       const { data, error } = await supabase.from('projects').insert({
-        name: newProjectName.trim(),
-        user_id: user.id
+        name: newProjectName.trim()
       }).select().single();
 
       if (data) {
@@ -526,15 +483,14 @@ export default function Home() {
 
         // Seed project personas with OpenClaw templates
         await supabase.from('project_personas').insert([
-          { project_id: data.id, user_id: user.id, filename: 'IDENTITY.md', content: DEFAULT_IDENTITY, updated_at: new Date().toISOString() },
-          { project_id: data.id, user_id: user.id, filename: 'SOUL.md', content: DEFAULT_SOUL, updated_at: new Date().toISOString() },
-          { project_id: data.id, user_id: user.id, filename: 'AGENTS.md', content: DEFAULT_AGENTS, updated_at: new Date().toISOString() },
+          { project_id: data.id, filename: 'IDENTITY.md', content: DEFAULT_IDENTITY, updated_at: new Date().toISOString() },
+          { project_id: data.id, filename: 'SOUL.md', content: DEFAULT_SOUL, updated_at: new Date().toISOString() },
+          { project_id: data.id, filename: 'AGENTS.md', content: DEFAULT_AGENTS, updated_at: new Date().toISOString() },
         ]);
         
         // Also create a default "Legacy Chat" for the new project
         await supabase.from('chats').insert({
           project_id: data.id,
-          user_id: user.id,
           name: 'Main Chat'
         });
       }
@@ -545,13 +501,12 @@ export default function Home() {
 
   // MemPalace facts CRUD
   const handleAddFact = async () => {
-    if (!newFact.trim() || !activeProject || !user || !supabase) return;
+    if (!newFact.trim() || !activeProject || !supabase) return;
     try {
       const { data, error } = await supabase
         .from('project_memories')
         .insert({
           project_id: activeProject.id,
-          user_id: user.id,
           room_name: activeRoom,
           fact_content: newFact.trim()
         })
@@ -578,7 +533,7 @@ export default function Home() {
 
   // OpenClaw unified persona save
   const handleSavePersona = async () => {
-    if (!activeProject || !user || !supabase || savingPersona) return;
+    if (!activeProject || !supabase || savingPersona) return;
     setSavingPersona(true);
     try {
       if (workspaceMode === 'project') {
@@ -586,7 +541,6 @@ export default function Home() {
           .from('project_personas')
           .upsert({
             project_id: activeProject.id,
-            user_id: user.id,
             filename: selectedPersonaFile,
             content: personaContent,
             updated_at: new Date().toISOString()
@@ -651,14 +605,13 @@ export default function Home() {
 
   // Push new Agent into project (Supabase & state)
   const handlePushAgent = async () => {
-    if (!newAgentName.trim() || !activeProject || !user || !supabase) return;
+    if (!newAgentName.trim() || !activeProject || !supabase) return;
     const cleanAgentName = newAgentName.trim().toLowerCase().replace(/\s+/g, '_');
     try {
       const { data, error } = await supabase
         .from('project_agents')
         .insert({
           project_id: activeProject.id,
-          user_id: user.id,
           name: cleanAgentName,
           identity_md: DEFAULT_IDENTITY,
           soul_md: DEFAULT_SOUL,
@@ -698,31 +651,16 @@ export default function Home() {
     } catch (e) {}
   };
 
-  const handleLogin = async () => {
-    if (!supabase) return;
-    await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        redirectTo: window.location.origin
-      }
-    });
-  };
 
-  const handleLogout = async () => {
-    if (!supabase) return;
-    await supabase.auth.signOut();
-    setUser(null);
-  };
 
   // Proactive execution methods
   const executeAddFact = async (room: string, content: string) => {
-    if (!activeProject || !user || !supabase) return;
+    if (!activeProject || !supabase) return;
     try {
       const { data } = await supabase
         .from('project_memories')
         .insert({
           project_id: activeProject.id,
-          user_id: user.id,
           room_name: room,
           fact_content: content.trim()
         })
@@ -734,14 +672,13 @@ export default function Home() {
   };
 
   const executeEditSelf = async (filename: string, content: string) => {
-    if (!activeProject || !user || !supabase) return;
+    if (!activeProject || !supabase) return;
     try {
       if (workspaceMode === 'project') {
         const { data } = await supabase
           .from('project_personas')
           .upsert({
             project_id: activeProject.id,
-            user_id: user.id,
             filename: filename,
             content: content,
             updated_at: new Date().toISOString()
@@ -783,14 +720,13 @@ export default function Home() {
   };
 
   const executeCreateAgent = async (name: string, content: string) => {
-    if (!activeProject || !user || !supabase) return;
+    if (!activeProject || !supabase) return;
     const cleanAgentName = name.trim().toLowerCase().replace(/\s+/g, '_');
     try {
       const { data } = await supabase
         .from('project_agents')
         .insert({
           project_id: activeProject.id,
-          user_id: user.id,
           name: cleanAgentName,
           identity_md: DEFAULT_IDENTITY,
           soul_md: DEFAULT_SOUL,
@@ -865,69 +801,6 @@ export default function Home() {
     return '< AI_RESPONSE >';
   };
 
-  // Render Full Auth Wall if not authenticated
-  if (authLoading) {
-    return (
-      <div className="auth-wall">
-        <div className="auth-card crosshairs">
-          <h1 className="text-white">NB_</h1>
-          <samp className="brand-sub">{"/// MEMGINE (MEMORY ENGINE)"}</samp>
-          <hr className="auth-hr" />
-          <samp className="loading-text">{">>> SYSTEM RESOLVING AUTHENTICATION..."}</samp>
-        </div>
-      </div>
-    );
-  }
-
-  if (!user) {
-    return (
-      <div className="auth-wall">
-        <div className="auth-card crosshairs">
-          <h1>NB</h1>
-          <samp className="brand-sub">{"/// MEMGINE (MEMORY ENGINE)"}</samp>
-          <hr className="auth-hr" />
-          <p className="auth-desc">NOTEBOOK PROJECTS CONTEXT SYSTEM AND PERSISTENT MEMORY MODULE.</p>
-          {!supabase ? (
-            <div className="login-btn" style={{ opacity: 0.5, cursor: 'not-allowed', marginTop: '20px' }}>
-              [ SYNC DISABLED - CONFIGURE SUPABASE ENV VARIABLES ]
-            </div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '20px' }}>
-              <button className="login-btn" onClick={handleLogin} style={{ padding: '12px' }}>
-                [ SIGN_IN WITH GOOGLE ]
-              </button>
-              
-              {isLocal && (
-                <div style={{ marginTop: '20px', borderTop: '1px dashed var(--grid-thick)', paddingTop: '20px' }}>
-                  <samp style={{ display: 'block', marginBottom: '12px', color: 'var(--fg-dim)' }}>[ LOCAL_DEV_LOGIN ]</samp>
-                  <form onSubmit={(e) => {
-                    e.preventDefault();
-                    const email = (e.currentTarget.elements.namedItem('email') as HTMLInputElement).value;
-                    const password = (e.currentTarget.elements.namedItem('password') as HTMLInputElement).value;
-                    setAuthLoading(true);
-                    supabase!.auth.signInWithPassword({ email, password }).then(({ data, error }) => {
-                      if (error) {
-                        alert(`Login failed: ${error.message}\nMake sure to create this user in your Supabase Auth dashboard first!`);
-                      } else {
-                        setUser(data.session?.user ?? null);
-                      }
-                      setAuthLoading(false);
-                    });
-                  }} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    <input name="email" type="email" defaultValue="aryavora21@gmail.com" placeholder="EMAIL" style={{ background: 'transparent', border: '1px solid var(--grid-thick)', color: 'var(--fg)', padding: '8px', fontFamily: 'monospace' }} />
-                    <input name="password" type="password" defaultValue="Skibid!1234" placeholder="PASSWORD" style={{ background: 'transparent', border: '1px solid var(--grid-thick)', color: 'var(--fg)', padding: '8px', fontFamily: 'monospace' }} />
-                    <button type="submit" className="login-btn" style={{ padding: '8px', marginTop: '4px' }}>
-                      [ DEV_LOGIN ]
-                    </button>
-                  </form>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
 
   const roomFacts = projectMemories.filter(pm => pm.room_name === activeRoom);
 
@@ -988,10 +861,9 @@ export default function Home() {
                         <button
                           onClick={async () => {
                             const name = prompt('Enter chat name:');
-                            if (name && user && supabase) {
+                            if (name && supabase) {
                               const { data } = await supabase.from('chats').insert({
                                 project_id: proj.id,
-                                user_id: user.id,
                                 name
                               }).select().single();
                               if (data) {
@@ -1048,13 +920,8 @@ export default function Home() {
 
           <footer className="sidebar-footer">
             <div className="auth-profile">
-              {user.user_metadata?.avatar_url && (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={user.user_metadata.avatar_url} alt="Profile" className="profile-img" />
-              )}
               <div className="profile-info">
-                <span className="profile-name truncate" style={{ display: sidebarWidth <= 60 ? 'none' : 'block' }}>{user.user_metadata?.full_name || user.email}</span>
-                <button className="logout-btn" onClick={handleLogout} style={{ display: sidebarWidth <= 60 ? 'none' : 'inline-block' }}>[ SIGN_OUT ]</button>
+                <span className="profile-name truncate" style={{ display: sidebarWidth <= 60 ? 'none' : 'block' }}>[ GLOBAL_SYNC_ENABLED ]</span>
               </div>
             </div>
             <div className="footer-actions">
