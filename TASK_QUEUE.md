@@ -1,24 +1,24 @@
 # Task Queue
 
-## Open
+## Open (all blocked on user)
 - USER: disable public email sign-ups in Supabase dashboard (Auth > Sign In/Up).
 - USER: enable leaked-password protection (Supabase dashboard, Auth settings).
-- Deploy to Vercel (awaiting user go-ahead; env vars from .env.example must be set in Vercel).
-- Optional: surface defaultModel picker in SettingsModal.
-- Optional: delete stale auth user aryavora21@gmail.com (cannot access data either way).
+- USER: decide whether to add ANTHROPIC_API_KEY (Claude Sonnet 5 native entry currently
+  errors cleanly) or remove that model entry.
+- USER: decide whether to delete stale auth user aryavora21@gmail.com.
+- USER: consider rotating the operator password (it was shared in a chat session).
 
 ## In-Progress
 (none)
 
 ## Done (2026-07-02)
-- Pushed to main: ba1c1b6 (hardening pass), 4a9bb0c (deploy prep).
-- Deploy prep: .env.example, real README, master_migration.sql now matches deployed RLS
-  (was still disabling RLS), stale default model fallback updated.
-- Full end-to-end test sweep (Playwright + SQL): auth cycle, chat send/persist, multi-chat
-  isolation, project create/delete + cascade integrity, facts CRUD, persona save/persist,
-  agent creation, memory graph, settings modal, custom model input. All passing.
-- Bugs fixed during testing: project-creation seeding race, Enter-to-submit on new project,
-  password autofill into API key fields.
-- Security: RLS on all 6 tables restricted to operator email; anon access verified blocked.
-- Auth: single-operator login gate + logout; operator password set per user instruction.
-- Code quality: ESLint 39 -> 0, tsc clean, prod build green.
+- Production live at memgine.vercel.app; auto-deploy from main verified working.
+- All env vars pushed to Vercel (Supabase URL/anon key, OpenRouter, Gemini); all providers
+  verified live in production.
+- /api/chat locked to authenticated callers (was anonymously callable on the public URL).
+- Model lineup researched against the full OpenRouter catalog and rebuilt in tiers:
+  7 free, 4 budget paid, 3 quality paid; every paid entry verified with the account key.
+  DeepSeek V4 Flash recommended as default daily driver.
+- Full-app test sweep (18 checks across auth, chat, projects, facts, personas, agents,
+  graph, settings) plus three bug fixes found by testing.
+- Earlier: RLS restricted to operator email, login gate, lint 39 -> 0, prod build green.

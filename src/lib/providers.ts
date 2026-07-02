@@ -23,10 +23,10 @@ interface ApiKeys {
 }
 
 // ── Model → Provider mapping ──
+// Google models route through OpenRouter BYOK (google/* ids fall through to the
+// openrouter default); the native callGoogle path stays for direct-key setups.
 const MODEL_PROVIDER_MAP: Record<string, string> = {
   'claude-5-sonnet-20260630': 'anthropic',
-  'gemini-3.5-flash': 'google',
-  'gemini-3.1-pro-preview': 'google',
   'openrouter/auto': 'openrouter',
   'nvidia/nemotron-3-ultra-550b-a55b:free': 'openrouter',
   'google/gemma-4-31b-it:free': 'openrouter',

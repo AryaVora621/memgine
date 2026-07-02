@@ -57,8 +57,11 @@ interface ProjectAgent {
 const MODELS = [
   // Native Direct Keys
   { id: 'claude-5-sonnet-20260630', label: 'CLAUDE SONNET 5 (NATIVE)' },
-  { id: 'gemini-3.5-flash', label: 'GEMINI 3.5 FLASH (NATIVE)' },
-  { id: 'gemini-3.1-pro-preview', label: 'GEMINI 3.1 PRO (NATIVE)' },
+
+  // Google via OpenRouter BYOK (billed to the attached Google account)
+  { id: 'google/gemini-3.5-flash', label: 'OR / GEMINI 3.5 FLASH (BYOK)' },
+  { id: 'google/gemini-3.1-pro-preview', label: 'OR / GEMINI 3.1 PRO (BYOK)' },
+  { id: 'google/gemma-4-31b-it', label: 'OR / GEMMA 4 31B (BYOK)' },
 
   // OpenRouter free tier (shared pools; can hit upstream rate limits at peak)
   { id: 'nvidia/nemotron-3-ultra-550b-a55b:free', label: 'OR / NEMOTRON ULTRA 550B (FREE)' },
