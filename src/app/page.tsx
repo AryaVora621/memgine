@@ -848,7 +848,7 @@ export default function Home() {
                         <span className="dir-prefix">{i === activeProjectIdx ? '>>>' : '---'}</span>
                         <span>{proj.name}</span>
                       </span>
-                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }} className="hide-on-min">
                         {i === activeProjectIdx && (
                           <button
                             onClick={(e) => handleDeleteProject(proj.id, e)}
@@ -863,7 +863,7 @@ export default function Home() {
                     </div>
                   </div>
                   {i === activeProjectIdx && (
-                    <ul style={{ listStyle: 'none', paddingLeft: '24px', margin: '4px 0', width: '100%' }}>
+                    <ul className="hide-on-min" style={{ listStyle: 'none', paddingLeft: '24px', margin: '4px 0', width: '100%' }}>
                       {chats.map(chat => (
                         <li key={chat.id}>
                           <button
@@ -929,7 +929,7 @@ export default function Home() {
 
             {/* New project form */}
             {showNewProject ? (
-              <div className="new-project-form" style={{ padding: '0 20px', display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '12px' }}>
+              <div className="new-project-form hide-on-min" style={{ padding: '0 20px', display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '12px' }}>
                 <input
                   className="new-project-input"
                   style={{ border: '1px solid var(--grid-thick)', width: '100%', padding: '6px' }}
@@ -944,7 +944,7 @@ export default function Home() {
                 </div>
               </div>
             ) : (
-              <button className="add-project-btn" onClick={() => setShowNewProject(true)}>
+              <button className="add-project-btn hide-on-min" onClick={() => setShowNewProject(true)}>
                 + NEW PROJECT
               </button>
             )}
@@ -1010,7 +1010,7 @@ export default function Home() {
               >
                 <option value="GENERAL_HELPER">GENERAL HELPER</option>
                 {projectAgents.map(a => (
-                  <option key={a.id} value={a.id}>{a.name.toUpperCase()}</option>
+                  <option key={a.id} value={a.id}>{a.name}</option>
                 ))}
               </select>
             </div>
@@ -1179,7 +1179,7 @@ export default function Home() {
                 >
                   <option value="project">PROJECT ROOT CONTEXT</option>
                   {projectAgents.map(a => (
-                    <option key={a.id} value={a.id}>AGENT: {a.name.toUpperCase()}</option>
+                    <option key={a.id} value={a.id}>AGENT: {a.name}</option>
                   ))}
                 </select>
 
@@ -1227,7 +1227,7 @@ export default function Home() {
 
               <div className="room-content">
                 <samp className="section-label">
-                  [ EDITING: {workspaceMode === 'project' ? 'PROJECT ROOT' : `AGENT ${projectAgents.find(a => a.id === workspaceMode)?.name.toUpperCase()}`} / {selectedPersonaFile} ]
+                  [ EDITING: {workspaceMode === 'project' ? 'PROJECT ROOT' : `AGENT ${projectAgents.find(a => a.id === workspaceMode)?.name}`} / {selectedPersonaFile} ]
                 </samp>
                 
                 <textarea

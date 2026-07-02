@@ -133,7 +133,7 @@ To define a new sub-agent that you can delegate to later, output:
 
     const formattedHistory: ChatMessage[] = history.map((m: any) => ({
       role: m.role,
-      content: m.content
+      content: m.content || m.text || ''
     }));
 
     if (formattedHistory.length === 0 || formattedHistory[formattedHistory.length - 1].content !== message) {

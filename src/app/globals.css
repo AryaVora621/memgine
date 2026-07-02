@@ -46,7 +46,7 @@ body {
   font-size: var(--small);
   line-height: 1.4;
   letter-spacing: 0.06em;
-  text-transform: uppercase;
+  
   position: relative;
 }
 
@@ -135,7 +135,7 @@ body::before {
   letter-spacing: -0.06em;
   color: var(--fg);
   margin: 0;
-  text-transform: uppercase;
+  
 }
 
 .sidebar-brand .brand-sub {
@@ -194,7 +194,7 @@ body::before {
   color: var(--fg-dim);
   font-family: var(--font-mono);
   font-size: var(--small);
-  text-transform: uppercase;
+  
   letter-spacing: 0.06em;
   cursor: pointer;
   text-align: left;
@@ -339,7 +339,7 @@ body::before {
   border: 1px solid var(--grid-thick);
   font-family: var(--font-mono);
   font-size: var(--small);
-  text-transform: uppercase;
+  
   letter-spacing: 0.06em;
   padding: 4px 8px;
   cursor: pointer;
@@ -374,7 +374,7 @@ body::before {
   border-right: none;
   font-family: var(--font-mono);
   font-size: var(--micro);
-  text-transform: uppercase;
+  
   letter-spacing: 0.08em;
   padding: 6px 12px;
   cursor: pointer;
@@ -479,7 +479,7 @@ body::before {
   border: 1px solid var(--grid);
   font-family: var(--font-mono);
   font-size: var(--micro);
-  text-transform: uppercase;
+  
   letter-spacing: 0.06em;
   padding: 3px 8px;
   cursor: pointer;
@@ -522,7 +522,7 @@ body::before {
   outline: none;
   font-family: var(--font-mono);
   font-size: var(--input);
-  text-transform: uppercase;
+  
   letter-spacing: 0.04em;
   resize: none;
   padding: 14px 16px;
@@ -650,7 +650,7 @@ body::before {
   color: var(--fg-dim);
   font-family: var(--font-mono);
   font-size: var(--micro);
-  text-transform: uppercase;
+  
   letter-spacing: 0.08em;
   cursor: pointer;
   text-align: center;
@@ -677,7 +677,7 @@ body::before {
   outline: none;
   font-family: var(--font-mono);
   font-size: var(--small);
-  text-transform: uppercase;
+  
   letter-spacing: 0.06em;
   padding: 8px;
 }
@@ -693,7 +693,7 @@ body::before {
   border-left: 1px solid var(--grid-thick);
   font-family: var(--font-mono);
   font-size: var(--micro);
-  text-transform: uppercase;
+  
   padding: 8px 12px;
   cursor: pointer;
   font-weight: 700;
@@ -706,7 +706,7 @@ body::before {
   color: var(--fg-dim);
   font-family: var(--font-mono);
   font-size: var(--micro);
-  text-transform: uppercase;
+  
   letter-spacing: 0.08em;
   cursor: pointer;
   padding: 0;
@@ -787,7 +787,7 @@ body::before {
   color: var(--fg-dim);
   letter-spacing: 0.08em;
   font-family: var(--font-mono);
-  text-transform: uppercase;
+  
 }
 
 .field-input {
@@ -808,7 +808,7 @@ body::before {
 
 .field-input::placeholder {
   color: var(--fg-dim);
-  text-transform: uppercase;
+  
 }
 
 .modal-footer {
@@ -837,7 +837,7 @@ body::before {
   border: none;
   font-family: var(--font-mono);
   font-size: var(--small);
-  text-transform: uppercase;
+  
   letter-spacing: 0.06em;
   padding: 6px 16px;
   cursor: pointer;
@@ -951,7 +951,7 @@ body::before {
   color: var(--red);
   font-family: var(--font-mono);
   font-size: var(--micro);
-  text-transform: uppercase;
+  
   cursor: pointer;
   padding: 0;
   text-align: left;
@@ -970,7 +970,7 @@ body::before {
   color: var(--fg);
   font-family: var(--font-mono);
   font-size: var(--micro);
-  text-transform: uppercase;
+  
   letter-spacing: 0.08em;
   cursor: pointer;
   text-align: center;
