@@ -1,9 +1,26 @@
 import { NextResponse } from 'next/server';
+import { createClient } from '@supabase/supabase-js';
 import { loadSettings } from '@/lib/settings';
 import { callProvider, type ChatMessage } from '@/lib/providers';
 
+// The route proxies paid AI providers, so it must not be callable anonymously.
+// Callers pass their Supabase access token; we verify it against the project.
+async function verifyCaller(req: Request): Promise<boolean> {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url || !anonKey) return true; // Supabase-less local setup: nothing to verify against
+  const token = req.headers.get('authorization')?.replace(/^Bearer\s+/i, '');
+  if (!token) return false;
+  const supabase = createClient(url, anonKey);
+  const { data, error } = await supabase.auth.getUser(token);
+  return !error && !!data.user;
+}
+
 export async function POST(req: Request) {
   try {
+    if (!(await verifyCaller(req))) {
+      return NextResponse.json({ success: false, error: 'UNAUTHORIZED' }, { status: 401 });
+    }
     const {
       projectId,
       projectName,

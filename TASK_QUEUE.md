@@ -1,25 +1,24 @@
 # Task Queue
 
 ## Open
-- Disable public email sign-ups in Supabase dashboard (Auth > Sign In/Up). RLS already blocks
-  non-operator accounts, but closing sign-ups removes noise. Dashboard-only toggle.
-- Enable leaked-password protection (Supabase dashboard, Auth settings). WARN-level advisor.
-- Optional: delete stale auth user aryavora21@gmail.com (left in place; it cannot access data).
-- Optional: surface defaultModel in SettingsModal.
-- Deploy: settings.ts writes API keys to a local file (.notebook_config); on Vercel this will not
-  persist between invocations. Move keys to env vars before deploying.
-- Commit session changes (user chose "not yet" on 2026-07-02).
+- USER: disable public email sign-ups in Supabase dashboard (Auth > Sign In/Up).
+- USER: enable leaked-password protection (Supabase dashboard, Auth settings).
+- Deploy to Vercel (awaiting user go-ahead; env vars from .env.example must be set in Vercel).
+- Optional: surface defaultModel picker in SettingsModal.
+- Optional: delete stale auth user aryavora21@gmail.com (cannot access data either way).
 
 ## In-Progress
 (none)
 
 ## Done (2026-07-02)
-- Auth: login gate (email/password) added to page.tsx, logout button, session-scoped data fetches.
-- Auth: aryavora621@gmail.com password set per user instruction; probe account deleted.
-- Security: RLS enabled on all 6 tables, policies restricted to operator email via is_operator().
-  Verified: anon REST returns [], signed-in app fully functional, chat persists under RLS.
-- Code quality: 39 ESLint problems -> 0, tsc clean, prod build passes.
-- Fixes: memory graph (was 404), project name in system prompt, OpenRouter empty-content handling,
-  persona draft reset, model persistence (localStorage), turbopack root warning, removed
-  better-sqlite3 + scratch.tsx.
-- Full Playwright smoke test: login (wrong + right password), all tabs, end-to-end chat, Supabase writes.
+- Pushed to main: ba1c1b6 (hardening pass), 4a9bb0c (deploy prep).
+- Deploy prep: .env.example, real README, master_migration.sql now matches deployed RLS
+  (was still disabling RLS), stale default model fallback updated.
+- Full end-to-end test sweep (Playwright + SQL): auth cycle, chat send/persist, multi-chat
+  isolation, project create/delete + cascade integrity, facts CRUD, persona save/persist,
+  agent creation, memory graph, settings modal, custom model input. All passing.
+- Bugs fixed during testing: project-creation seeding race, Enter-to-submit on new project,
+  password autofill into API key fields.
+- Security: RLS on all 6 tables restricted to operator email; anon access verified blocked.
+- Auth: single-operator login gate + logout; operator password set per user instruction.
+- Code quality: ESLint 39 -> 0, tsc clean, prod build green.
