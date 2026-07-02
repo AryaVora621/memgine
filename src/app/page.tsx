@@ -62,6 +62,9 @@ const MODELS = [
   // Local Models
   { id: 'agy-local', label: 'AGY -P (LOCAL)' },
   { id: 'claude-local', label: 'CLAUDE -P (LOCAL)' },
+  
+  // Custom Option
+  { id: 'custom', label: 'CUSTOM OPENROUTER MODEL...' },
 ];
 
 const ROOMS = ['GENERAL', 'DATABASE', 'FRONTEND', 'APIS', 'ARCHITECTURE'];
@@ -177,7 +180,8 @@ export default function Home() {
 
   // Multi-Agent overlays
   const [projectAgents, setProjectAgents] = useState<ProjectAgent[]>([]);
-  const [selectedAgentId, setSelectedAgentId] = useState<string>('GENERAL_HELPER');
+  const [customModel, setCustomModel] = useState('');
+  const [selectedAgentId, setSelectedAgentId] = useState('GENERAL_HELPER');
   const [workspaceMode, setWorkspaceMode] = useState<string>('project'); // 'project' or agent ID
   const [newAgentName, setNewAgentName] = useState('');
   const [showNewAgent, setShowNewAgent] = useState(false);
@@ -399,6 +403,8 @@ export default function Home() {
       agents_md: selectedAgent.agents_md
     } : null;
 
+    const finalModel = model === 'custom' ? customModel.trim() : model;
+
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
@@ -408,7 +414,7 @@ export default function Home() {
           chatId: activeChatId,
           message: userMsgText,
           history: currentMessages, // Send previous messages from client state
-          model,
+          model: finalModel,
           projectMemories: projectMemories, 
           projectPersonas: projectPersonas,   
           agentName: selectedAgent ? selectedAgent.name : 'GENERAL_HELPER',
@@ -446,7 +452,7 @@ export default function Home() {
               chat_id: activeChatId,
               content: data.response,
               role: 'assistant',
-              metadata: { model, agentName: data.agentName },
+              metadata: { model: finalModel, agentName: data.agentName },
               parent_id: userDbMsg.id,
               timestamp: new Date().toISOString()
             });
@@ -1013,6 +1019,17 @@ export default function Home() {
                   <option key={m.id} value={m.id}>{m.label}</option>
                 ))}
               </select>
+              
+              {model === 'custom' && (
+                <input
+                  type="text"
+                  value={customModel}
+                  onChange={e => setCustomModel(e.target.value)}
+                  placeholder="enter model tag..."
+                  className="model-select"
+                  style={{ marginLeft: '8px', borderLeft: '1px solid var(--grid-thick)', paddingLeft: '8px', width: '200px' }}
+                />
+              )}
 
               <samp className="model-label" style={{ marginLeft: '12px' }}>AGENT:</samp>
               <select
