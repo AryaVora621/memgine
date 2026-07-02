@@ -1279,9 +1279,9 @@ export default function Home() {
               <div className="input-zone">
                 <div className="skills-bar">
                   <samp className="skills-label">[ SKILLS ]</samp>
-                  <button className="skill-btn">IMAGE_GEN</button>
-                  <button className="skill-btn">AUDIO_SEQ</button>
-                  <button className="skill-btn">VIDEO_RND</button>
+                  <button className="skill-btn" disabled title="COMING SOON" style={{ opacity: 0.4, cursor: 'not-allowed' }}>IMAGE_GEN</button>
+                  <button className="skill-btn" disabled title="COMING SOON" style={{ opacity: 0.4, cursor: 'not-allowed' }}>AUDIO_SEQ</button>
+                  <button className="skill-btn" disabled title="COMING SOON" style={{ opacity: 0.4, cursor: 'not-allowed' }}>VIDEO_RND</button>
                 </div>
                 <hr />
                 <div className="compose-row">
