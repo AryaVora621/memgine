@@ -4,6 +4,8 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import GraphView from '@/components/GraphView';
 import SettingsModal from '@/components/SettingsModal';
 import { supabase } from '@/lib/supabaseClient';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 interface Message {
   role: 'user' | 'assistant' | 'system';
@@ -769,7 +771,12 @@ export default function Home() {
     let match;
     while ((match = combinedRegex.exec(msgText)) !== null) {
       if (match.index > currentIndex) {
-        elements.push(<samp key={`text-${currentIndex}`} style={{ whiteSpace: 'pre-wrap', display: 'block', marginBottom: '8px' }}>{msgText.substring(currentIndex, match.index)}</samp>);
+        const textContent = msgText.substring(currentIndex, match.index);
+        elements.push(
+          <div key={`text-${currentIndex}`} className="markdown-body" style={{ marginBottom: '8px' }}>
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{textContent}</ReactMarkdown>
+          </div>
+        );
       }
       
       const tag = match[1];
@@ -806,7 +813,12 @@ export default function Home() {
     }
     
     if (currentIndex < msgText.length) {
-      elements.push(<samp key={`text-${currentIndex}`} style={{ whiteSpace: 'pre-wrap', display: 'block' }}>{msgText.substring(currentIndex)}</samp>);
+      const textContent = msgText.substring(currentIndex);
+      elements.push(
+        <div key={`text-${currentIndex}`} className="markdown-body">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{textContent}</ReactMarkdown>
+        </div>
+      );
     }
     
     return <>{elements}</>;
