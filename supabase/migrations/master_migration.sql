@@ -27,8 +27,12 @@ ALTER TABLE public.project_agents DROP COLUMN IF EXISTS user_id CASCADE;
 -- 4. Single-operator security model.
 -- Public signups may be enabled on the Supabase project, so "any authenticated user"
 -- is not a safe boundary. Every table is restricted to the operator account.
+-- The function lives in a non-exposed schema so PostgREST cannot serve it via
+-- /rest/v1/rpc (Supabase advisor lints 0028/0029).
 -- CHANGE THE EMAIL BELOW when deploying under a different account.
-CREATE OR REPLACE FUNCTION public.is_operator()
+CREATE SCHEMA IF NOT EXISTS private;
+
+CREATE OR REPLACE FUNCTION private.is_operator()
 RETURNS boolean
 LANGUAGE sql
 STABLE
@@ -37,6 +41,11 @@ SET search_path = ''
 AS $$
   SELECT COALESCE(auth.jwt()->>'email', '') = 'aryavora621@gmail.com';
 $$;
+
+REVOKE ALL ON FUNCTION private.is_operator() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION private.is_operator() TO authenticated;
+
+DROP FUNCTION IF EXISTS public.is_operator();
 
 ALTER TABLE public.projects ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.chats ENABLE ROW LEVEL SECURITY;
@@ -53,7 +62,7 @@ BEGIN
   LOOP
     EXECUTE format('DROP POLICY IF EXISTS "operator full access" ON public.%I', t);
     EXECUTE format(
-      'CREATE POLICY "operator full access" ON public.%I FOR ALL TO authenticated USING (public.is_operator()) WITH CHECK (public.is_operator())',
+      'CREATE POLICY "operator full access" ON public.%I FOR ALL TO authenticated USING (private.is_operator()) WITH CHECK (private.is_operator())',
       t
     );
   END LOOP;

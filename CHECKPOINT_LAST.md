@@ -1,22 +1,25 @@
-# Checkpoint - 2026-07-02 (agent: claude-fable-main)
+# Checkpoint - 2026-07-02 evening (agent: claude-fable-main)
 
 ## Completed
-- Full production polish + security pass, then a complete end-to-end test sweep:
-  auth cycle, chat send/persist, multi-chat isolation, project create/delete,
-  MemPalace facts CRUD, persona save/persist, agent creation, memory graph,
-  settings modal, custom model input. All passing.
-- Bugs found by testing and fixed:
-  - handleCreateProject raced its own seeding (Main Chat/personas inserted after
-    activation, so fetch effects missed them). Reordered: seed first, then activate.
-  - New-project input did not submit on Enter. Added.
-  - Browser credential autofill landed the login password in the Anthropic API key
-    field (password-type input). Added autoComplete="new-password".
-- Earlier same day: RLS locked to operator email, login gate, memory graph fix,
-  OpenRouter empty-content handling, model persistence, lint 39 -> 0.
-- DB integrity verified: cascade deletes leave zero orphans. Test data cleaned up.
+- Google models rerouted through OpenRouter BYOK (native Gemini key is free-tier);
+  all 3 verified live on prod. Stale auth user aryavora21@gmail.com deleted.
+- Mobile-responsive layout shipped (drawer sidebar with hamburger/backdrop,
+  single-column grid, palace/persona horizontal room strip, scrollable tabs,
+  capped login card). All mobile Playwright checks pass at 390x844, including a
+  live chat send.
+- Persona system overhauled (commit ec9289e, on main): new IDENTITY/SOUL/AGENTS
+  defaults documenting the Memgine environment and tool contract; ASK_USER tag
+  added end to end (system prompt + amber question card in chat); predefined
+  agents got a shared env briefing plus per-agent ask-vs-act rules; TESTING
+  project seeded with the new files in Supabase (it previously had NO persona
+  rows at all).
+
+## In progress
+- Vercel auto-deploy of ec9289e rolling out.
 
 ## Next action
-- Commit and push to main (user instructed 2026-07-02: "once we are ready push to main").
+- Spot-check mobile layout + ASK_USER card on memgine.vercel.app after deploy.
 
 ## Human decisions needed
-- (none pending)
+- See TASK_QUEUE.md Open section (Supabase dashboard toggles, Anthropic key,
+  password rotation).
