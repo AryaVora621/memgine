@@ -25,8 +25,8 @@ interface ApiKeys {
 // ── Model → Provider mapping ──
 const MODEL_PROVIDER_MAP: Record<string, string> = {
   'claude-5-sonnet-20260630': 'anthropic',
-  'gemini-3.5-flash': 'google',
-  'gemini-3.1-pro': 'google',
+  'gemini-1.5-flash': 'google',
+  'gemini-1.5-pro': 'google',
   'openrouter/auto': 'openrouter',
   'nvidia/nemotron-3-ultra-550b-a55b:free': 'openrouter',
   'google/gemma-4-31b-it:free': 'openrouter',

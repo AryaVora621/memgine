@@ -49,8 +49,8 @@ interface ProjectAgent {
 const MODELS = [
   // Native Direct Keys
   { id: 'claude-5-sonnet-20260630', label: 'CLAUDE SONNET 5 (NATIVE)' },
-  { id: 'gemini-3.5-flash', label: 'GEMINI 3.5 FLASH (NATIVE)' },
-  { id: 'gemini-3.1-pro', label: 'GEMINI 3.1 PRO (NATIVE)' },
+  { id: 'gemini-1.5-flash', label: 'GEMINI 1.5 FLASH (NATIVE)' },
+  { id: 'gemini-1.5-pro', label: 'GEMINI 1.5 PRO (NATIVE)' },
 
   // OpenRouter (Free Models)
   { id: 'nvidia/nemotron-3-ultra-550b-a55b:free', label: 'OR / NEMOTRON ULTRA 550B (FREE)' },
