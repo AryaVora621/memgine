@@ -4,7 +4,9 @@ import { useState, useRef, useEffect, useCallback, useMemo, useSyncExternalStore
 import GraphView from '@/components/GraphView';
 import SettingsModal from '@/components/SettingsModal';
 import AskUserCard from '@/components/AskUserCard';
+import AttachmentView from '@/components/AttachmentView';
 import { slugify, isMemType, parseTagAttrs, stripIncompleteTagTail, MEM_TYPES, type MemType } from '@/lib/tags';
+import { ATTACHMENTS_BUCKET, attachmentKind, safeStorageName, formatBytes, type Attachment } from '@/lib/attachments';
 import { supabase } from '@/lib/supabaseClient';
 import type { Session } from '@supabase/supabase-js';
 import ReactMarkdown from 'react-markdown';
@@ -15,6 +17,7 @@ interface Message {
   text: string;
   timestamp: string;
   streaming?: boolean;
+  attachments?: Attachment[];
 }
 
 interface Project {
@@ -404,6 +407,11 @@ export default function Home() {
   const [activeRoom, setActiveRoom] = useState(ROOMS[0]);
   const [newFact, setNewFact] = useState('');
   const [newFactType, setNewFactType] = useState<MemType>('project');
+  const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
+  const [uploadingFiles, setUploadingFiles] = useState(0);
+  const [genMode, setGenMode] = useState<'image' | 'audio' | 'video' | null>(null);
+  const [webSearch, setWebSearch] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // OpenClaw unified markdown files
   const [projectPersonas, setProjectPersonas] = useState<ProjectPersona[]>([]);
@@ -559,7 +567,8 @@ export default function Home() {
           const loadedMsgs = data.map(m => ({
             role: m.role,
             text: m.content,
-            timestamp: m.timestamp
+            timestamp: m.timestamp,
+            attachments: (m.metadata as { attachments?: Attachment[] } | null)?.attachments,
           }));
           setMessagesByChat(prev => ({
             ...prev,
@@ -669,11 +678,96 @@ export default function Home() {
     }));
   }, []);
 
+  // Upload picked files into the private attachments bucket; they queue as
+  // chips on the compose bar until the next send.
+  const handleFilesSelected = async (files: FileList | null) => {
+    if (!files || files.length === 0 || !supabase || !activeProject || !activeChatId) return;
+    for (const file of Array.from(files)) {
+      setUploadingFiles(n => n + 1);
+      try {
+        const mime = file.type || 'application/octet-stream';
+        const path = `${activeProject.id}/${activeChatId}/${Date.now()}-${safeStorageName(file.name)}`;
+        const { error } = await supabase.storage
+          .from(ATTACHMENTS_BUCKET)
+          .upload(path, file, { contentType: mime });
+        if (!error) {
+          setPendingAttachments(prev => [...prev, {
+            path,
+            name: file.name,
+            mime,
+            size: file.size,
+            kind: attachmentKind(mime, file.name),
+          }]);
+        }
+      } catch {}
+      setUploadingFiles(n => n - 1);
+    }
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  // Generation skills: prompt -> /api/generate -> stored media + persisted
+  // messages. Video is an async job polled until it completes.
+  const runGeneration = async (kind: 'image' | 'audio' | 'video', prompt: string) => {
+    if (!activeProject || !activeChatId || loading) return;
+    const chatId = activeChatId;
+    addMessage(chatId, { role: 'user', text: `[ ${kind.toUpperCase()}_GEN ] ${prompt}`, timestamp: ts() });
+    setLoading(true);
+    try {
+      const callGenerate = (extra: Record<string, unknown>) => fetch('/api/generate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+        },
+        body: JSON.stringify({ projectId: activeProject.id, chatId, kind, prompt, ...extra }),
+      }).then(r => r.json());
+
+      let result = await callGenerate({});
+      if (result.success && result.pending && result.jobId) {
+        const jobId = result.jobId;
+        for (let i = 0; i < 60 && result.success && result.pending; i++) {
+          await new Promise(resolve => setTimeout(resolve, 6000));
+          result = await callGenerate({ jobId });
+        }
+      }
+
+      if (result.success && result.attachment) {
+        addMessage(chatId, {
+          role: 'assistant',
+          text: `[ ${kind.toUpperCase()}_GEN ] Generated ${kind} for: "${prompt}"`,
+          timestamp: ts(),
+          attachments: [result.attachment],
+        });
+        setGraphRefresh(prev => prev + 1);
+      } else {
+        addMessage(chatId, {
+          role: 'system',
+          text: `[ ERROR ] ${result.error || (result.pending ? 'Generation still running; it may finish server-side. Reload later.' : 'Generation failed.')}`,
+          timestamp: ts(),
+        });
+      }
+    } catch (e) {
+      addMessage(chatId, {
+        role: 'system',
+        text: `[ FATAL ] Generation failed. (${e instanceof Error ? e.message : 'unknown error'})`,
+        timestamp: ts(),
+      });
+    }
+    setLoading(false);
+  };
+
   const sendChatMessage = async (userMsgText: string) => {
     if (!userMsgText.trim() || !activeProject || !activeChatId || loading) return;
     const chatId = activeChatId;
+    const attachments = pendingAttachments;
+    setPendingAttachments([]);
 
-    addMessage(chatId, { role: 'user', text: userMsgText, timestamp: ts() });
+    addMessage(chatId, {
+      role: 'user',
+      text: userMsgText,
+      timestamp: ts(),
+      attachments: attachments.length > 0 ? attachments : undefined,
+    });
     setLoading(true);
 
     // Resolve specific selected Agent profile configuration
@@ -701,6 +795,8 @@ export default function Home() {
           model: finalModel,
           agentName: selectedAgent ? selectedAgent.name : 'GENERAL_HELPER',
           agentPersonas: agentDetails,
+          attachments,
+          webSearch,
           // The server fetches history/memories/personas from Supabase itself;
           // these ride along only for Supabase-less local setups.
           ...(supabase ? {} : {
@@ -777,10 +873,17 @@ export default function Home() {
   };
 
   const handleSend = async () => {
-    if (!message.trim() || loading) return;
-    const text = message;
+    if (loading) return;
+    const text = message.trim();
+    if (genMode) {
+      if (!text) return;
+      setMessage('');
+      await runGeneration(genMode, text);
+      return;
+    }
+    if (!text && pendingAttachments.length === 0) return;
     setMessage('');
-    await sendChatMessage(text);
+    await sendChatMessage(text || 'See the attached file(s).');
   };
 
   const handleDeleteProject = async (projectId: string, e: React.MouseEvent) => {
@@ -1529,6 +1632,9 @@ export default function Home() {
                       </samp>
                       <div className="msg-body">
                         {renderMessageContent(msg.streaming ? stripIncompleteTagTail(msg.text) : msg.text)}
+                        {msg.attachments?.map((att, ai) => (
+                          <AttachmentView key={`${att.path}-${ai}`} attachment={att} />
+                        ))}
                         {msg.streaming && <samp className="loading-text">▋</samp>}
                       </div>
                     </div>
@@ -1549,13 +1655,71 @@ export default function Home() {
               <div className="input-zone">
                 <div className="skills-bar">
                   <samp className="skills-label">[ SKILLS ]</samp>
-                  <button className="skill-btn" disabled title="COMING SOON" style={{ opacity: 0.4, cursor: 'not-allowed' }}>IMAGE_GEN</button>
-                  <button className="skill-btn" disabled title="COMING SOON" style={{ opacity: 0.4, cursor: 'not-allowed' }}>AUDIO_SEQ</button>
-                  <button className="skill-btn" disabled title="COMING SOON" style={{ opacity: 0.4, cursor: 'not-allowed' }}>VIDEO_RND</button>
+                  {([['image', 'IMAGE_GEN'], ['audio', 'AUDIO_GEN'], ['video', 'VIDEO_GEN']] as const).map(([mode, label]) => (
+                    <button
+                      key={mode}
+                      className="skill-btn"
+                      title={genMode === mode ? 'Click to return to chat mode' : `Next prompt generates ${mode}`}
+                      onClick={() => setGenMode(genMode === mode ? null : mode)}
+                      style={genMode === mode ? { color: 'var(--amber, #d97706)', borderColor: 'var(--amber, #d97706)' } : undefined}
+                    >
+                      {genMode === mode ? `● ${label}` : label}
+                    </button>
+                  ))}
+                  <button
+                    className="skill-btn"
+                    title={webSearch ? 'Web search on: model can search the live web' : 'Let the model search the live web (OpenRouter models)'}
+                    onClick={() => setWebSearch(!webSearch)}
+                    style={webSearch ? { color: '#19B36B', borderColor: '#19B36B' } : undefined}
+                  >
+                    {webSearch ? '● WEB_SEARCH' : 'WEB_SEARCH'}
+                  </button>
                 </div>
                 <hr />
+                {(pendingAttachments.length > 0 || uploadingFiles > 0) && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', padding: '6px 8px 0' }}>
+                    {pendingAttachments.map((att, i) => (
+                      <samp
+                        key={att.path}
+                        style={{
+                          display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '4px 8px',
+                          border: '1px solid var(--grid-thick)', background: 'var(--bg-raised)',
+                          fontSize: 'var(--micro)', color: 'var(--fg-dim)',
+                        }}
+                      >
+                        [ {att.kind.toUpperCase()} ] {att.name} · {formatBytes(att.size)}
+                        <button
+                          type="button"
+                          onClick={() => setPendingAttachments(prev => prev.filter((_, pi) => pi !== i))}
+                          style={{ background: 'none', border: 'none', color: 'var(--red, #E61919)', cursor: 'pointer', fontFamily: 'inherit', padding: 0 }}
+                        >
+                          [X]
+                        </button>
+                      </samp>
+                    ))}
+                    {uploadingFiles > 0 && (
+                      <samp style={{ fontSize: 'var(--micro)', color: 'var(--fg-dim)', padding: '4px 0' }}>
+                        UPLOADING {uploadingFiles} FILE{uploadingFiles > 1 ? 'S' : ''}…
+                      </samp>
+                    )}
+                  </div>
+                )}
                 <div className="compose-row">
-                  <button className="attach-btn" title="Attach file">+</button>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    style={{ display: 'none' }}
+                    onChange={e => handleFilesSelected(e.target.files)}
+                  />
+                  <button
+                    className="attach-btn"
+                    title="Attach files"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={loading || uploadingFiles > 0}
+                  >
+                    +
+                  </button>
                   <textarea
                     className="compose-input"
                     rows={2}
@@ -1567,15 +1731,21 @@ export default function Home() {
                         handleSend();
                       }
                     }}
-                    placeholder={loading ? 'PROCESSING...' : 'ENTER COMMAND...'}
+                    placeholder={
+                      loading
+                        ? 'PROCESSING...'
+                        : genMode
+                          ? `DESCRIBE THE ${genMode.toUpperCase()} TO GENERATE...`
+                          : 'ENTER COMMAND...'
+                    }
                     disabled={loading}
                   />
                   <button
                     className="exec-btn"
                     onClick={handleSend}
-                    disabled={!message.trim() || loading}
+                    disabled={loading || (genMode ? !message.trim() : (!message.trim() && pendingAttachments.length === 0))}
                   >
-                    <span className="exec-label">{loading ? '...' : 'EXEC'}</span>
+                    <span className="exec-label">{loading ? '...' : genMode ? 'GEN' : 'EXEC'}</span>
                     <span className="exec-arrows">{">>>"}</span>
                   </button>
                 </div>

@@ -4,9 +4,33 @@
  * Supports: OpenRouter, Anthropic, OpenAI, and local CLI (agy/claude).
  */
 
+// Content is either plain text or multimodal parts (OpenAI dialect). All
+// OpenAI-compatible providers accept parts natively; Anthropic converts.
+export type ContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } };
+
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
-  content: string;
+  content: string | ContentPart[];
+}
+
+export function contentToText(content: string | ContentPart[]): string {
+  if (typeof content === 'string') return content;
+  return content.map(p => (p.type === 'text' ? p.text : `[image: ${p.image_url.url.slice(0, 60)}...]`)).join('\n');
+}
+
+type AnthropicBlock =
+  | { type: 'text'; text: string }
+  | { type: 'image'; source: { type: 'url'; url: string } };
+
+function toAnthropicContent(content: string | ContentPart[]): string | AnthropicBlock[] {
+  if (typeof content === 'string') return content;
+  return content.map(p =>
+    p.type === 'text'
+      ? { type: 'text' as const, text: p.text }
+      : { type: 'image' as const, source: { type: 'url' as const, url: p.image_url.url } }
+  );
 }
 
 export interface ProviderResponse {
@@ -90,19 +114,19 @@ async function callAnthropic(messages: ChatMessage[], model: string, apiKey: str
   const body: {
     model: string;
     max_tokens: number;
-    messages: { role: string; content: string }[];
+    messages: { role: string; content: string | AnthropicBlock[] }[];
     system?: { type: string; text: string; cache_control: { type: string } }[];
   } = {
     model,
     max_tokens: 4096,
-    messages: convMsgs.map(m => ({ role: m.role, content: m.content })),
+    messages: convMsgs.map(m => ({ role: m.role, content: toAnthropicContent(m.content) })),
   };
 
   if (systemMsgs.length > 0) {
     body.system = [
       {
         type: 'text',
-        text: systemMsgs.map(m => m.content).join('\n'),
+        text: systemMsgs.map(m => contentToText(m.content)).join('\n'),
         cache_control: { type: 'ephemeral' }
       }
     ];
@@ -244,12 +268,13 @@ async function* streamOpenAICompatible(
   url: string,
   messages: ChatMessage[],
   model: string,
-  headers: Record<string, string>
+  headers: Record<string, string>,
+  extraBody: Record<string, unknown> = {}
 ): AsyncGenerator<string> {
   const res = await fetch(url, {
     method: 'POST',
     headers: { ...headers, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model, messages, stream: true }),
+    body: JSON.stringify({ model, messages, stream: true, ...extraBody }),
   });
   if (!res.ok) {
     const err = await res.text();
@@ -276,12 +301,12 @@ async function* streamAnthropic(messages: ChatMessage[], model: string, apiKey: 
     model,
     max_tokens: 4096,
     stream: true,
-    messages: convMsgs.map(m => ({ role: m.role, content: m.content })),
+    messages: convMsgs.map(m => ({ role: m.role, content: toAnthropicContent(m.content) })),
   };
   if (systemMsgs.length > 0) {
     body.system = [{
       type: 'text',
-      text: systemMsgs.map(m => m.content).join('\n'),
+      text: systemMsgs.map(m => contentToText(m.content)).join('\n'),
       cache_control: { type: 'ephemeral' },
     }];
   }
@@ -312,10 +337,16 @@ async function* streamAnthropic(messages: ChatMessage[], model: string, apiKey: 
   }
 }
 
+export interface ProviderOptions {
+  // OpenRouter web plugin: lets the model search the live web before answering.
+  webSearch?: boolean;
+}
+
 export async function* streamProvider(
   messages: ChatMessage[],
   model: string,
-  apiKeys: ApiKeys
+  apiKeys: ApiKeys,
+  opts: ProviderOptions = {}
 ): AsyncGenerator<string> {
   const provider = MODEL_PROVIDER_MAP[model] || 'openrouter';
 
@@ -355,7 +386,7 @@ export async function* streamProvider(
         'Authorization': `Bearer ${key}`,
         'HTTP-Referer': 'http://localhost:3030',
         'X-Title': 'Notebook',
-      });
+      }, opts.webSearch ? { plugins: [{ id: 'web' }] } : {});
       return;
     }
   }
@@ -368,7 +399,7 @@ import fs from 'fs';
 
 async function callLocalCLI(messages: ChatMessage[], model: string): Promise<ProviderResponse> {
   const isAgy = model === 'agy-local';
-  const prompt = messages.map(m => `[${m.role.toUpperCase()}]\n${m.content}`).join('\n\n');
+  const prompt = messages.map(m => `[${m.role.toUpperCase()}]\n${contentToText(m.content)}`).join('\n\n');
   
   try {
     const tmpFile = path.join(os.tmpdir(), `memgine_local_${Date.now()}.txt`);

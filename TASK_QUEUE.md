@@ -1,5 +1,14 @@
 # Task Queue
 
+## Roadmap: full AI chat site (set 2026-07-03)
+- Media/file uploads in chat (vision input + text-file inlining) - IN PROGRESS
+- Generation skills via OpenRouter unified APIs: IMAGE_GEN, AUDIO_GEN (TTS),
+  VIDEO_GEN (async jobs), WEB_SEARCH (:online) - IN PROGRESS
+- Voice input (mic -> OpenRouter STT /api/v1/audio/transcriptions)
+- Connectors, claude.ai/ChatGPT-style: Google Drive, Canva, Notion, GitHub,
+  Gmail. Approach: OAuth-scoped integrations surfaced through an MCP-client
+  layer in Memgine so any MCP server becomes a connector.
+
 ## Open (all blocked on user)
 - USER: disable public email sign-ups in Supabase dashboard (Auth > Sign In/Up).
 - USER: enable leaked-password protection (Supabase dashboard, Auth settings).

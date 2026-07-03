@@ -1,6 +1,8 @@
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { type SupabaseClient } from '@supabase/supabase-js';
 import { loadSettings } from '@/lib/settings';
-import { callProvider, streamProvider, type ChatMessage } from '@/lib/providers';
+import { callProvider, streamProvider, type ChatMessage, type ContentPart } from '@/lib/providers';
+import { ATTACHMENTS_BUCKET, type Attachment } from '@/lib/attachments';
+import { authedClient, getSupabaseEnv } from '@/lib/serverSupabase';
 
 // The server is the source of truth: it fetches personas, memories, and
 // history from Supabase itself (scoped to the caller's JWT so RLS applies),
@@ -28,25 +30,6 @@ interface HistoryRow {
   text?: string;
   timestamp?: string;
   metadata?: unknown;
-}
-
-function getSupabaseEnv() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  return url && anonKey ? { url, anonKey } : null;
-}
-
-async function authedClient(req: Request): Promise<{ db: SupabaseClient; token: string } | null | 'unauthorized'> {
-  const env = getSupabaseEnv();
-  if (!env) return null; // Supabase-less local setup
-  const token = req.headers.get('authorization')?.replace(/^Bearer\s+/i, '');
-  if (!token) return 'unauthorized';
-  const db = createClient(env.url, env.anonKey, {
-    global: { headers: { Authorization: `Bearer ${token}` } },
-  });
-  const { data, error } = await db.auth.getUser(token);
-  if (error || !data.user) return 'unauthorized';
-  return { db, token };
 }
 
 // Query embedding via the `embed` edge function (built-in gte-small model).
@@ -156,6 +139,8 @@ export async function POST(req: Request) {
       model,
       agentName,
       agentPersonas,
+      attachments = [],
+      webSearch = false,
       // Fallbacks used only when Supabase is not configured:
       history: clientHistory = [],
       projectMemories: clientMemories = [],
@@ -203,7 +188,7 @@ export async function POST(req: Request) {
         chat_id: chatId,
         content: message,
         role: 'user',
-        metadata: {},
+        metadata: attachments.length > 0 ? { attachments } : {},
         parent_id: rows && rows.length > 0 ? rows[rows.length - 1].id : null,
         timestamp: new Date().toISOString(),
       }).select('id').single();
@@ -359,12 +344,51 @@ chat history are the source of truth.
       content: `You are an AI assistant for the project "${projectName || projectId}". You have access to the conversation history for this chat (older parts may arrive as a summary). Be helpful, precise, and remember prior context from this project's sessions.${openClawContext}${summaryContext}${memoriesContext}${proactiveCapabilities}`,
     };
 
-    const formattedHistory: ChatMessage[] = (history as HistoryRow[]).map(m => ({
-      role: m.role,
-      content: m.content || m.text || '',
-    }));
+    // Resolve the user message content: text, plus vision parts for images and
+    // inlined bodies for text-like files (mempalace-style: originals stay in
+    // storage verbatim; the model gets what it can actually read).
+    let userContent: string | ContentPart[] = message;
+    const atts = (attachments as Attachment[]).filter(a => a && a.path && a.name);
+    if (auth && atts.length > 0) {
+      const { db } = auth;
+      const parts: ContentPart[] = [];
+      let inlined = '';
+      const notes: string[] = [];
+      for (const att of atts) {
+        if (att.kind === 'image') {
+          const { data } = await db.storage.from(ATTACHMENTS_BUCKET).createSignedUrl(att.path, 600);
+          if (data?.signedUrl) parts.push({ type: 'image_url', image_url: { url: data.signedUrl } });
+          else notes.push(`[attached image unavailable: ${att.name}]`);
+        } else if (att.kind === 'text') {
+          const { data } = await db.storage.from(ATTACHMENTS_BUCKET).download(att.path);
+          if (data) {
+            const body = (await data.text()).slice(0, 30000);
+            inlined += `\n\n[FILE: ${att.name}]\n\`\`\`\n${body}\n\`\`\``;
+          } else {
+            notes.push(`[attached file unavailable: ${att.name}]`);
+          }
+        } else {
+          notes.push(`[attached ${att.kind}: ${att.name} (${att.mime})]`);
+        }
+      }
+      const text = [message, inlined, notes.join('\n')].filter(Boolean).join('\n');
+      userContent = parts.length > 0 ? [{ type: 'text', text }, ...parts] : text;
+    } else if (atts.length > 0) {
+      userContent = `${message}\n` + atts.map(a => `[attached ${a.kind}: ${a.name}]`).join('\n');
+    }
+
+    const formattedHistory: ChatMessage[] = (history as HistoryRow[]).map(m => {
+      let content = m.content || m.text || '';
+      const meta = (m.metadata && typeof m.metadata === 'object' ? m.metadata : null) as { attachments?: Attachment[] } | null;
+      if (meta?.attachments?.length) {
+        content += '\n' + meta.attachments.map(a => `[attached ${a.kind}: ${a.name}]`).join('\n');
+      }
+      return { role: m.role, content };
+    });
     if (formattedHistory.length === 0 || formattedHistory[formattedHistory.length - 1].content !== message) {
-      formattedHistory.push({ role: 'user', content: message });
+      formattedHistory.push({ role: 'user', content: userContent });
+    } else {
+      formattedHistory[formattedHistory.length - 1].content = userContent;
     }
     const messagesForAI: ChatMessage[] = [systemPrompt, ...formattedHistory];
 
@@ -376,7 +400,7 @@ chat history are the source of truth.
           controller.enqueue(encoder.encode(`data: ${JSON.stringify(obj)}\n\n`));
         let fullText = '';
         try {
-          for await (const delta of streamProvider(messagesForAI, selectedModel, settings.apiKeys)) {
+          for await (const delta of streamProvider(messagesForAI, selectedModel, settings.apiKeys, { webSearch: webSearch === true })) {
             fullText += delta;
             send({ delta });
           }

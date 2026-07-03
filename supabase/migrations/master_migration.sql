@@ -134,3 +134,15 @@ AS $$
   ORDER BY score DESC
   LIMIT p_k;
 $$;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Chat attachments storage (uploads + generated media). Operator-only, private
+-- bucket, 50MB per object. Applied 2026-07-03 as migration "attachments_storage".
+INSERT INTO storage.buckets (id, name, public, file_size_limit)
+VALUES ('attachments', 'attachments', false, 52428800)
+ON CONFLICT (id) DO NOTHING;
+DROP POLICY IF EXISTS "operator attachments" ON storage.objects;
+CREATE POLICY "operator attachments" ON storage.objects
+  FOR ALL TO authenticated
+  USING (bucket_id = 'attachments' AND private.is_operator())
+  WITH CHECK (bucket_id = 'attachments' AND private.is_operator());
