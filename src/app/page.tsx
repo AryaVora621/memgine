@@ -411,7 +411,10 @@ export default function Home() {
   const [uploadingFiles, setUploadingFiles] = useState(0);
   const [genMode, setGenMode] = useState<'image' | 'audio' | 'video' | null>(null);
   const [webSearch, setWebSearch] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
 
   // OpenClaw unified markdown files
   const [projectPersonas, setProjectPersonas] = useState<ProjectPersona[]>([]);
@@ -703,6 +706,51 @@ export default function Home() {
       setUploadingFiles(n => n - 1);
     }
     if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  // Voice input: record from the mic, transcribe via /api/transcribe (OpenRouter
+  // STT), and drop the text into the compose box for review before sending.
+  const toggleRecording = async () => {
+    if (recording) {
+      mediaRecorderRef.current?.stop();
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4';
+      const recorder = new MediaRecorder(stream, { mimeType });
+      const chunks: Blob[] = [];
+      recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+      recorder.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop());
+        setRecording(false);
+        setTranscribing(true);
+        try {
+          const blob = new Blob(chunks, { type: mimeType });
+          const bytes = new Uint8Array(await blob.arrayBuffer());
+          let binary = '';
+          for (let i = 0; i < bytes.length; i += 0x8000) {
+            binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+          }
+          const res = await fetch('/api/transcribe', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+            },
+            body: JSON.stringify({ data: btoa(binary), format: mimeType.includes('webm') ? 'webm' : 'm4a' }),
+          });
+          const json = await res.json();
+          if (json.success && json.text) {
+            setMessage(prev => (prev ? `${prev} ` : '') + json.text);
+          }
+        } catch {}
+        setTranscribing(false);
+      };
+      recorder.start();
+      mediaRecorderRef.current = recorder;
+      setRecording(true);
+    } catch {}
   };
 
   // Generation skills: prompt -> /api/generate -> stored media + persisted
@@ -1719,6 +1767,15 @@ export default function Home() {
                     disabled={loading || uploadingFiles > 0}
                   >
                     +
+                  </button>
+                  <button
+                    className="attach-btn"
+                    title={recording ? 'Stop recording' : transcribing ? 'Transcribing…' : 'Voice input'}
+                    onClick={toggleRecording}
+                    disabled={loading || transcribing}
+                    style={recording ? { color: '#E61919', borderColor: '#E61919' } : undefined}
+                  >
+                    {transcribing ? '…' : recording ? '■' : '●'}
                   </button>
                   <textarea
                     className="compose-input"
