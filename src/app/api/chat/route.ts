@@ -4,6 +4,7 @@ import { callProvider, streamProvider, type ChatMessage, type ContentPart } from
 import { ATTACHMENTS_BUCKET, type Attachment } from '@/lib/attachments';
 import { authedClient, getSupabaseEnv } from '@/lib/serverSupabase';
 import { listConnectorTools, type Connector, type McpTool } from '@/lib/mcp';
+import { resolveConnectorAuth } from '@/lib/mcpOauth';
 
 // The server is the source of truth: it fetches personas, memories, and
 // history from Supabase itself (scoped to the caller's JWT so RLS applies),
@@ -256,7 +257,7 @@ export async function POST(req: Request) {
       if (conns.length > 0) {
         const catalogs = await Promise.all(conns.map(async c => ({
           name: c.name,
-          tools: await cachedConnectorTools(c),
+          tools: await cachedConnectorTools(await resolveConnectorAuth(auth.db, c).catch(() => c)),
         })));
         const lines: string[] = [];
         for (const cat of catalogs) {

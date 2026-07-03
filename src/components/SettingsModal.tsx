@@ -13,6 +13,8 @@ interface ConnectorRow {
   name: string;
   url: string;
   enabled: boolean;
+  auth_token: string | null;
+  oauth: { access_token?: string } | null;
 }
 
 export default function SettingsModal({ open, onClose }: SettingsModalProps) {
@@ -31,7 +33,7 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
 
   const loadConnectors = () => {
     if (!supabase) return;
-    supabase.from('connectors').select('id, name, url, enabled').order('created_at')
+    supabase.from('connectors').select('id, name, url, enabled, auth_token, oauth').order('created_at')
       .then(({ data }) => { if (data) setConnectors(data); });
   };
 
@@ -73,6 +75,30 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
     if (!supabase) return;
     await supabase.from('connectors').delete().eq('id', conn.id);
     loadConnectors();
+  };
+
+  // OAuth connect: the server discovers the auth server, registers a client,
+  // and returns the authorization URL; the browser completes the grant there.
+  const connectOAuth = async (conn: ConnectorRow) => {
+    if (!supabase) return;
+    setConnStatus(`STARTING OAUTH FOR ${conn.name}…`);
+    const { data } = await supabase.auth.getSession();
+    const token = data.session?.access_token;
+    try {
+      const res = await fetch('/api/oauth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ action: 'start', connectorId: conn.id, origin: window.location.origin }),
+      });
+      const json = await res.json();
+      if (json.success && json.authUrl) {
+        window.location.assign(json.authUrl);
+      } else {
+        setConnStatus(`ERROR: ${json.error || 'could not start OAuth'}`);
+      }
+    } catch (e) {
+      setConnStatus(`ERROR: ${e instanceof Error ? e.message : 'oauth start failed'}`);
+    }
   };
 
   const testConnectors = async () => {
@@ -169,11 +195,19 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
             <div key={conn.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
               <samp style={{ fontSize: 'var(--micro)', flex: 1, color: conn.enabled ? 'var(--fg)' : 'var(--fg-dim)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {conn.name} · {conn.url}
+                <span style={{ color: '#19B36B', marginLeft: '6px' }}>
+                  {conn.auth_token ? '[TOKEN]' : conn.oauth?.access_token ? '[OAUTH ✓]' : ''}
+                </span>
               </samp>
-              <button className="tab-btn" style={{ fontSize: 'var(--micro)' }} onClick={() => toggleConnector(conn)}>
+              {!conn.auth_token && (
+                <button className="action-btn" onClick={() => connectOAuth(conn)}>
+                  {conn.oauth?.access_token ? 'RECONNECT' : 'CONNECT'}
+                </button>
+              )}
+              <button className="action-btn" onClick={() => toggleConnector(conn)}>
                 {conn.enabled ? 'ON' : 'OFF'}
               </button>
-              <button className="tab-btn" style={{ fontSize: 'var(--micro)', color: 'var(--red)' }} onClick={() => deleteConnector(conn)}>
+              <button className="action-btn" style={{ color: 'var(--red)' }} onClick={() => deleteConnector(conn)}>
                 [X]
               </button>
             </div>
@@ -198,10 +232,10 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
               placeholder="BEARER TOKEN (OPTIONAL)" />
           </div>
           <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
-            <button className="tab-btn" onClick={addConnector} disabled={!newConn.name.trim() || !newConn.url.trim()}>
+            <button className="action-btn" onClick={addConnector} disabled={!newConn.name.trim() || !newConn.url.trim()}>
               [ ADD CONNECTOR ]
             </button>
-            <button className="tab-btn" onClick={testConnectors} disabled={connectors.length === 0}>
+            <button className="action-btn" onClick={testConnectors} disabled={connectors.length === 0}>
               [ TEST ]
             </button>
           </div>

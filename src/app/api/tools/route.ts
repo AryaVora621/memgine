@@ -1,5 +1,6 @@
 import { authedClient } from '@/lib/serverSupabase';
 import { listConnectorTools, callConnectorTool, toolResultToText, type Connector } from '@/lib/mcp';
+import { resolveConnectorAuth } from '@/lib/mcpOauth';
 
 // Connector tools: GET lists connectors with their live tool catalogs;
 // POST executes one tool call (approval-gated in the UI) and persists the
@@ -17,14 +18,15 @@ export async function GET(req: Request) {
 
   const results = await Promise.all(
     (connectors as Connector[]).map(async conn => {
-      if (!conn.enabled) return { ...conn, auth_token: undefined, tools: [], status: 'disabled' };
+      if (!conn.enabled) return { ...conn, auth_token: undefined, oauth: undefined, tools: [], status: 'disabled' };
       try {
-        const tools = await listConnectorTools(conn);
-        return { ...conn, auth_token: undefined, tools, status: 'online' };
+        const tools = await listConnectorTools(await resolveConnectorAuth(db, conn));
+        return { ...conn, auth_token: undefined, oauth: undefined, tools, status: 'online' };
       } catch (e) {
         return {
           ...conn,
           auth_token: undefined,
+          oauth: undefined,
           tools: [],
           status: 'offline',
           error: e instanceof Error ? e.message : 'unreachable',
@@ -57,7 +59,7 @@ export async function POST(req: Request) {
       return Response.json({ success: false, error: `Connector "${connector}" not found or disabled` }, { status: 404 });
     }
 
-    const result = await callConnectorTool(conn as Connector, tool, args);
+    const result = await callConnectorTool(await resolveConnectorAuth(db, conn as Connector), tool, args);
     const text = toolResultToText(result);
 
     if (projectId && chatId) {

@@ -164,3 +164,7 @@ CREATE POLICY "operator connectors" ON public.connectors
   FOR ALL TO authenticated
   USING (private.is_operator())
   WITH CHECK (private.is_operator());
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- OAuth support for MCP connectors. Applied 2026-07-03 as "connectors_oauth".
+ALTER TABLE public.connectors ADD COLUMN IF NOT EXISTS oauth jsonb;

@@ -492,8 +492,32 @@ body::before {
 
 .compose-row {
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  /* attach | mic | input | exec */
+  grid-template-columns: auto auto 1fr auto;
   align-items: stretch;
+}
+
+/* Standalone small action button (tab-btn is for adjoined tab groups and
+   drops its right border, which looks broken used alone). */
+.action-btn {
+  background: var(--bg-raised);
+  color: var(--fg-dim);
+  border: 1px solid var(--grid-thick);
+  font-family: var(--font-mono);
+  font-size: var(--micro);
+  letter-spacing: 0.08em;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.action-btn:hover:not(:disabled) {
+  color: var(--fg);
+  border-color: var(--fg-dim);
+}
+
+.action-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .attach-btn {
