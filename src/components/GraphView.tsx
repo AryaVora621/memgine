@@ -9,10 +9,11 @@ const ForceGraph2D = dynamic(() => import('react-force-graph-2d'), { ssr: false 
 interface GraphNode {
   id: string;
   label: string;
-  role: string;
-  group: number;
+  kind: 'room' | 'fact';
+  memType: string;
+  room: string;
   val: number;
-  timestamp: string;
+  description: string;
   fullContent: string;
   x?: number;
   y?: number;
@@ -21,6 +22,7 @@ interface GraphNode {
 interface GraphLink {
   source: string;
   target: string;
+  crossLink: boolean;
 }
 
 interface GraphViewProps {
@@ -28,11 +30,13 @@ interface GraphViewProps {
   refreshKey: number;
 }
 
-const GROUP_COLORS: Record<number, string> = {
-  1: '#EAEAEA',  // user messages — white
-  2: '#E61919',  // assistant messages — red
-  3: '#666666',  // system — dim
+const TYPE_COLORS: Record<string, string> = {
+  user: '#EAEAEA',      // who the operator is — white
+  feedback: '#E61919',  // how to work — red
+  project: '#19B36B',   // ongoing work — green
+  reference: '#D97706', // external pointers — amber
 };
+const ROOM_COLOR = '#666666';
 
 // Shape the force-graph library hands to canvas callbacks; our GraphNode data
 // plus the runtime coordinates it injects.
@@ -44,46 +48,73 @@ export default function GraphView({ projectId, refreshKey }: GraphViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [dims, setDims] = useState({ w: 800, h: 600 });
 
-  // Build the memory graph straight from Supabase: one node per message,
-  // linked by explicit parent_id or by conversation order within a chat.
+  // Build the palace graph straight from Supabase: rooms are hubs, each stored
+  // memory is a node in its room, and [[name]] references become cross-links.
   useEffect(() => {
     if (!projectId || !supabase) return;
     supabase
-      .from('memories')
-      .select('id, role, content, timestamp, parent_id, chat_id')
+      .from('project_memories')
+      .select('id, room_name, fact_content, name, description, mem_type')
       .eq('project_id', projectId)
-      .order('timestamp', { ascending: true })
+      .order('created_at', { ascending: true })
       .then(({ data }) => {
         if (!data) return;
         const rows = data as {
           id: string;
-          role: string;
-          content: string | null;
-          timestamp: string;
-          parent_id: string | null;
-          chat_id: string | null;
+          room_name: string | null;
+          fact_content: string;
+          name: string | null;
+          description: string | null;
+          mem_type: string | null;
         }[];
-        const nodes: GraphNode[] = rows.map(m => ({
-          id: m.id,
-          label: (m.content || '').substring(0, 24),
-          role: m.role,
-          group: m.role === 'user' ? 1 : m.role === 'assistant' ? 2 : 3,
-          val: 3,
-          timestamp: m.timestamp,
-          fullContent: m.content || '',
-        }));
-        const ids = new Set(rows.map(m => m.id));
+
+        const nodes: GraphNode[] = [];
         const links: GraphLink[] = [];
-        const lastByChat: Record<string, string> = {};
+        const roomIds = new Set<string>();
+        const idBySlug: Record<string, string> = {};
+
         for (const m of rows) {
-          const chatKey = m.chat_id || 'none';
-          if (m.parent_id && ids.has(m.parent_id)) {
-            links.push({ source: m.parent_id, target: m.id });
-          } else if (lastByChat[chatKey]) {
-            links.push({ source: lastByChat[chatKey], target: m.id });
+          const room = (m.room_name || 'GENERAL').toUpperCase();
+          const roomId = `room:${room}`;
+          if (!roomIds.has(roomId)) {
+            roomIds.add(roomId);
+            nodes.push({
+              id: roomId,
+              label: room,
+              kind: 'room',
+              memType: 'room',
+              room,
+              val: 6,
+              description: '',
+              fullContent: '',
+            });
           }
-          lastByChat[chatKey] = m.id;
+          const slug = m.name || m.fact_content.substring(0, 24);
+          nodes.push({
+            id: m.id,
+            label: slug.substring(0, 28),
+            kind: 'fact',
+            memType: m.mem_type || 'project',
+            room,
+            val: 3,
+            description: m.description || '',
+            fullContent: m.fact_content,
+          });
+          if (m.name) idBySlug[m.name] = m.id;
+          links.push({ source: roomId, target: m.id, crossLink: false });
         }
+
+        // [[name]] references between memories become dashed cross-links.
+        for (const m of rows) {
+          const refs = m.fact_content.match(/\[\[([^\]]+)\]\]/g) || [];
+          for (const raw of refs) {
+            const target = idBySlug[raw.slice(2, -2).trim()];
+            if (target && target !== m.id) {
+              links.push({ source: m.id, target, crossLink: true });
+            }
+          }
+        }
+
         setGraphData({ nodes, links });
       });
   }, [projectId, refreshKey]);
@@ -102,22 +133,26 @@ export default function GraphView({ projectId, refreshKey }: GraphViewProps) {
 
   const paintNode = useCallback((node: FGNode, ctx: CanvasRenderingContext2D) => {
     const size = node.val || 3;
-    const color = GROUP_COLORS[node.group ?? 0] || '#EAEAEA';
+    const color = node.kind === 'room' ? ROOM_COLOR : TYPE_COLORS[node.memType || 'project'] || '#EAEAEA';
     const x = node.x ?? 0;
     const y = node.y ?? 0;
 
-    // Square nodes — brutalist geometry
-    ctx.fillStyle = color;
-    ctx.fillRect(x - size, y - size, size * 2, size * 2);
+    // Square nodes — brutalist geometry. Rooms are hollow, memories solid.
+    if (node.kind === 'room') {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(x - size, y - size, size * 2, size * 2);
+    } else {
+      ctx.fillStyle = color;
+      ctx.fillRect(x - size, y - size, size * 2, size * 2);
+      ctx.strokeStyle = '#333333';
+      ctx.lineWidth = 0.5;
+      ctx.strokeRect(x - size, y - size, size * 2, size * 2);
+    }
 
-    ctx.strokeStyle = '#333333';
-    ctx.lineWidth = 0.5;
-    ctx.strokeRect(x - size, y - size, size * 2, size * 2);
-
-    // Label
     const label = node.label || String(node.id ?? '').substring(0, 8);
-    ctx.font = '2.5px JetBrains Mono, monospace';
-    ctx.fillStyle = '#999999';
+    ctx.font = node.kind === 'room' ? 'bold 3px JetBrains Mono, monospace' : '2.5px JetBrains Mono, monospace';
+    ctx.fillStyle = node.kind === 'room' ? '#999999' : '#777777';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
     ctx.fillText(label.toUpperCase(), x, y + size + 2);
@@ -129,8 +164,8 @@ export default function GraphView({ projectId, refreshKey }: GraphViewProps) {
     <div ref={containerRef} style={{ width: '100%', height: '100%', position: 'relative' }}>
       {isEmpty ? (
         <div className="graph-empty">
-          <samp>[ NO MEMORY NODES ]</samp>
-          <samp className="graph-empty-sub">SEND MESSAGES TO BUILD THE GRAPH</samp>
+          <samp>[ PALACE EMPTY ]</samp>
+          <samp className="graph-empty-sub">STORE FACTS IN THE MEM_PALACE TO BUILD THE MAP</samp>
         </div>
       ) : (
         <>
@@ -144,11 +179,9 @@ export default function GraphView({ projectId, refreshKey }: GraphViewProps) {
               ctx.fillRect((node.x ?? 0) - size, (node.y ?? 0) - size, size * 2, size * 2);
             }}
             onNodeHover={(node: FGNode | null) => setHovered((node as GraphNode) || null)}
-            linkColor={() => '#333333'}
+            linkColor={l => ((l as unknown as GraphLink).crossLink ? '#E61919' : '#333333')}
             linkWidth={1}
-            linkDirectionalArrowLength={4}
-            linkDirectionalArrowRelPos={0.9}
-            linkDirectionalParticles={1}
+            linkDirectionalParticles={l => ((l as unknown as GraphLink).crossLink ? 1 : 0)}
             linkDirectionalParticleColor={() => '#E61919'}
             linkDirectionalParticleWidth={2}
             linkDirectionalParticleSpeed={0.008}
@@ -156,15 +189,17 @@ export default function GraphView({ projectId, refreshKey }: GraphViewProps) {
             height={dims.h}
             backgroundColor="#0A0A0A"
           />
-          {hovered && (
-            <div className="graph-tooltip">
-              <samp className="graph-tooltip-role">
-                {hovered.role === 'user' ? '< USER >' : '< ASSISTANT >'}
-                {' '}{hovered.timestamp}
-              </samp>
-              <samp className="graph-tooltip-text">{hovered.fullContent}</samp>
-            </div>
-          )}
+          <div className="graph-tooltip" style={{ pointerEvents: 'none', opacity: hovered && hovered.kind === 'fact' ? 1 : 0 }}>
+            {hovered && hovered.kind === 'fact' && (
+              <>
+                <samp className="graph-tooltip-role">
+                  {hovered.label} · {hovered.memType.toUpperCase()} · {hovered.room}
+                </samp>
+                {hovered.description && <samp className="graph-tooltip-text">{hovered.description}</samp>}
+                <samp className="graph-tooltip-text">{hovered.fullContent}</samp>
+              </>
+            )}
+          </div>
         </>
       )}
     </div>

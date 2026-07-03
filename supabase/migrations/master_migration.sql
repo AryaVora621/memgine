@@ -67,3 +67,70 @@ BEGIN
     );
   END LOOP;
 END $$;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Memory-file format (mirrors Claude Code's memory system).
+-- Every MemPalace fact becomes a named, typed memory with a one-line
+-- description, equivalent to a memory file's frontmatter:
+--   name: kebab-case slug          → project_memories.name
+--   description: one-line summary  → project_memories.description
+--   metadata.type: user|feedback|project|reference → project_memories.mem_type
+-- Applied 2026-07-03 as migration "memory_file_format".
+ALTER TABLE public.project_memories
+  ADD COLUMN IF NOT EXISTS name text,
+  ADD COLUMN IF NOT EXISTS description text,
+  ADD COLUMN IF NOT EXISTS mem_type text NOT NULL DEFAULT 'project'
+    CHECK (mem_type IN ('user', 'feedback', 'project', 'reference'));
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Hybrid memory recall (mirrors mempalace tiered retrieval: semantic + keyword
+-- + temporal boosts). Applied 2026-07-03 as migration "hybrid_memory_recall".
+CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA extensions;
+ALTER TABLE public.project_memories
+  ADD COLUMN IF NOT EXISTS embedding extensions.vector(384);
+CREATE INDEX IF NOT EXISTS project_memories_embedding_idx
+  ON public.project_memories USING hnsw (embedding extensions.vector_cosine_ops);
+CREATE UNIQUE INDEX IF NOT EXISTS project_memories_project_name_key
+  ON public.project_memories (project_id, name);
+CREATE UNIQUE INDEX IF NOT EXISTS project_agents_project_name_key
+  ON public.project_agents (project_id, name);
+ALTER TABLE public.chats
+  ADD COLUMN IF NOT EXISTS summary text,
+  ADD COLUMN IF NOT EXISTS summary_upto timestamptz;
+CREATE OR REPLACE FUNCTION public.match_memories(
+  p_project uuid,
+  p_query text,
+  p_terms text[] DEFAULT '{}',
+  p_k int DEFAULT 8
+)
+RETURNS TABLE (
+  id uuid,
+  room_name text,
+  name text,
+  description text,
+  mem_type text,
+  fact_content text,
+  score double precision
+)
+LANGUAGE sql
+STABLE
+SET search_path = public, extensions
+AS $$
+  SELECT
+    m.id, m.room_name, m.name, m.description, m.mem_type, m.fact_content,
+    (
+      CASE WHEN m.embedding IS NULL THEN 0.0
+           ELSE 1.0 - (m.embedding <=> p_query::extensions.vector(384)) END
+      + LEAST(0.24, 0.06 * (
+          SELECT count(*)::float FROM unnest(p_terms) t
+          WHERE m.name ILIKE '%' || t || '%'
+             OR m.description ILIKE '%' || t || '%'
+             OR m.fact_content ILIKE '%' || t || '%'
+        ))
+      + 0.1 * exp(-extract(epoch FROM (now() - m.created_at)) / (60.0 * 86400.0))
+    ) AS score
+  FROM public.project_memories m
+  WHERE m.project_id = p_project
+  ORDER BY score DESC
+  LIMIT p_k;
+$$;

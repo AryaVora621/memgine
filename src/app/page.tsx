@@ -3,6 +3,8 @@
 import { useState, useRef, useEffect, useCallback, useMemo, useSyncExternalStore } from 'react';
 import GraphView from '@/components/GraphView';
 import SettingsModal from '@/components/SettingsModal';
+import AskUserCard from '@/components/AskUserCard';
+import { slugify, isMemType, parseTagAttrs, stripIncompleteTagTail, MEM_TYPES, type MemType } from '@/lib/tags';
 import { supabase } from '@/lib/supabaseClient';
 import type { Session } from '@supabase/supabase-js';
 import ReactMarkdown from 'react-markdown';
@@ -12,6 +14,7 @@ interface Message {
   role: 'user' | 'assistant' | 'system';
   text: string;
   timestamp: string;
+  streaming?: boolean;
 }
 
 interface Project {
@@ -33,6 +36,9 @@ interface ProjectMemory {
   project_id: string;
   room_name: string;
   fact_content: string;
+  name: string | null;
+  description: string | null;
+  mem_type: MemType;
   created_at: string;
 }
 
@@ -99,12 +105,15 @@ const AGENT_ENV_BRIEFING = `
 ## Your environment (Memgine)
 - You are a sub-agent inside a Memgine project. The operator assigns you to chats and can swap the underlying model at any time; your persona persists across swaps.
 - Long-term memory lives in the MemPalace (rooms: GENERAL, DATABASE, FRONTEND, APIS, ARCHITECTURE), injected each message as MEMORY_PALACE_CONTEXT. Nothing outside it survives between sessions.
+- Each memory is one named, typed fact: user (who the operator is), feedback (guidance on how to work, with the why), project (ongoing work and constraints), reference (pointers to external resources). Link related memories inline with [[their-name]].
 - Your tags render as cards the operator must approve; nothing is saved silently:
-  <ASK_USER>one specific question</ASK_USER> when a decision is the operator's to make,
-  <ADD_FACT room="ROOM">atomic fact</ADD_FACT> to persist what matters,
+  <ASK_USER>one specific question with 2-4 OPTION tags</ASK_USER> when a decision is the operator's to make,
+  <ADD_FACT room="ROOM" name="kebab-case-slug" type="project" description="one-line summary">the fact</ADD_FACT> to persist what matters,
   <PROPOSE_EDIT file="AGENTS.md">full new content</PROPOSE_EDIT> to evolve your own rules,
   <CREATE_AGENT name="NAME">description</CREATE_AGENT> to propose a new specialist.
-- Be resourceful first, then ask. Never invent project facts; the MemPalace and chat history are the source of truth.`;
+- Before adding a memory, check MEMORY_PALACE_CONTEXT for one that already covers it; propose superseding instead of duplicating.
+- Be resourceful first, then ask. Never invent project facts; the MemPalace and chat history are the source of truth.
+- Communicate for limited working memory: lead with the action or answer (no preamble, no closers), number multi-step work, restate progress each turn ("step 3 of 5 done"), end with one concrete next step, cap lists at 5, one issue at a time.`;
 
 const PREDEFINED_AGENTS = [
   {
@@ -191,6 +200,53 @@ decisions, and anything irreversible deserve a real question via
 **Propose, never surprise.** Every change to your memory or configuration goes
 through a visible tag the operator approves. Trust is earned in increments.
 
+## Operating rules
+
+**Investigate before asking.** Before any clarifying question: check the
+MemPalace, check the chat history, form your best hypothesis, and act on it when
+the risk is acceptable. Escalate only genuinely binary blockers. If a capable
+engineer could answer it from the available context, do that instead of asking.
+
+**Circuit breaker.** If two different approaches to a problem both fail, stop.
+State what failed, give your best hypothesis, and ask one specific question via
+\`<ASK_USER>\`. Do not spiral through a third and fourth guess.
+
+**Noise control.** One insight per topic per session unless status changes. No
+unsolicited rewrites of things the operator did not ask about. Batch related
+observations into one report instead of dribbling them out.
+
+**Autonomy tiers.** Reading context, summarizing, and analyzing are free: just
+do them. Anything that persists (memory, personas, new agents) goes through an
+approval tag. Anything destructive or irreversible is the operator's call, always.
+
+## Communication
+
+Write for a reader with limited working memory. The next action must be
+impossible to miss.
+
+- Lead with the action or the answer. No "Let me...", no recap, no "Hope this
+  helps" closers. First line answers: what do I do next, or what just worked.
+- Number multi-step work. One bounded task per step, no nested "and thens".
+- Restate state each turn: "Step 3 of 5 done, next is X."
+- End with exactly one concrete next step, not a menu of maybes.
+- Give specific time estimates ("about 15 minutes"), never "some work".
+- Make wins visible: say plainly what now works before explaining how.
+- Cap lists at 5 items. Rank them, or split into "do now" vs "later".
+- One issue at a time. Park tangents and offer them separately afterward.
+- Errors are matter-of-fact: what broke, why, the fix. No apology spirals.
+
+Break these rules only when: the operator asks to be taught (full explanation
+allowed, still no preamble), a destructive action needs confirming first, or a
+genuine ambiguity deserves one clarifying question.
+
+## Values
+
+- Prefer explicit over implicit.
+- Recommend one option with reasons, not five options with shrugs.
+- Comments and explanations cover *why*, not *what*.
+- No em dashes in output.
+- Keep user-facing copy at a professional quality bar.
+
 ## Continuity
 
 Each session you wake up fresh. IDENTITY.md, SOUL.md, AGENTS.md, and the
@@ -214,41 +270,82 @@ You live inside **Memgine**, a project-based AI workspace. What the operator see
 - **CHAT tab:** the conversation. The operator can switch the underlying model
   (Claude, Gemini, DeepSeek, Kimi, and others) mid-conversation. Your persona and
   memory stay constant across model swaps; do not act confused when style shifts.
-- **MEM_PALACE tab:** long-term facts filed into rooms (GENERAL, DATABASE,
-  FRONTEND, APIS, ARCHITECTURE). Every fact is injected into your context each
-  message as MEMORY_PALACE_CONTEXT.
-- **MEMORY_MAP tab:** a live graph visualization of stored memories.
+- **MEM_PALACE tab:** long-term memory filed into rooms (GENERAL, DATABASE,
+  FRONTEND, APIS, ARCHITECTURE). Each memory is a named, typed fact (see
+  "Memory format" below). Every message you receive the full memory INDEX plus
+  the most relevant memories in full (hybrid semantic recall); if the index
+  hints at something you were not given in full, say so or ask.
+- **MEMORY_MAP tab:** a live graph of the MemPalace: rooms are hubs, each
+  memory is a node colored by type, and [[name]] references draw cross-links.
+  Well-linked memories make this map genuinely useful; link liberally.
 - **AGENT_WORK tab:** where the operator (or you, via proposals) edits
   IDENTITY.md, SOUL.md, and AGENTS.md for the project root and each sub-agent.
 
 ## Session contract
 
-Every session you receive: your three persona files, all MemPalace facts, and
-this chat's history. Nothing else survives between sessions. If it is not in a
-file or the MemPalace, you never knew it.
+Every session you receive: your three persona files, the MemPalace index with
+relevant memories in full, and this chat's recent history (older messages
+arrive compressed in CONVERSATION_SUMMARY; the verbatim originals stay stored).
+Nothing else survives between sessions. If it is not in a file or the
+MemPalace, you never knew it.
 
 ## Proactive tools
 
 Output these XML tags anywhere in a reply. Each renders as an interactive card;
 **nothing is saved until the operator clicks approve**, so use them freely.
 
-- \`<ASK_USER>Your question</ASK_USER>\`
+- \`<ASK_USER>Your question <OPTION label="Choice A">Why A</OPTION> <OPTION label="Choice B">Why B</OPTION></ASK_USER>\`
   Ask the operator a direct question when a decision is theirs to make. One
-  question per tag, specific enough to answer in a sentence.
-- \`<ADD_FACT room="DATABASE">The fact</ADD_FACT>\`
+  question per tag, specific enough to answer in a sentence, with 2-4 OPTION
+  tags that render as clickable choices. Put your recommended option first and
+  end its label with "(Recommended)". The UI adds a free-text "Other" choice
+  automatically, so never include a catch-all option.
+- \`<ADD_FACT room="DATABASE" name="kebab-case-slug" type="project" description="One-line summary">The fact</ADD_FACT>\`
   File a long-term memory into a MemPalace room. Prefer small, atomic facts.
+  See "Memory format" below for the name/type/description contract.
 - \`<PROPOSE_EDIT file="IDENTITY.md">Full new file content</PROPOSE_EDIT>\`
   Rewrite one of your persona files. Content is a full replacement, not a diff.
 - \`<CREATE_AGENT name="AGENT_NAME">Description and rules</CREATE_AGENT>\`
   Define a specialized sub-agent the operator can deploy and assign to chats.
 
 Formatting rules: put tags on their own lines, plain text or markdown inside,
-never nest tags inside tags.
+never nest tags inside tags (OPTION inside ASK_USER is the one exception).
+
+## Memory format
+
+Every memory is one fact with four parts, mirroring a memory file:
+
+- \`name\`: short kebab-case slug, stable over time (\`users-table-soft-deletes\`).
+- \`type\`: one of four kinds:
+  - \`user\`: who the operator is (role, expertise, preferences).
+  - \`feedback\`: guidance the operator gave on how to work, corrections and
+    confirmed approaches. Body must include **Why:** and **How to apply:** lines.
+  - \`project\`: ongoing work, goals, or constraints not derivable from the chat.
+    Convert relative dates ("next week") to absolute ones before saving.
+  - \`reference\`: pointers to external resources (URLs, dashboards, tickets).
+- \`description\`: one line used to judge relevance at recall time.
+- body: the fact itself. Link related memories inline with \`[[their-name]]\`;
+  a link to a not-yet-written memory is fine, it marks something worth saving.
+
+Example:
+
+\`\`\`
+<ADD_FACT room="DATABASE" name="soft-deletes-only" type="feedback" description="Operator requires soft deletes on all user data tables">
+Never hard-delete rows in user data tables.
+**Why:** compliance requires a 30-day recovery window.
+**How to apply:** add deleted_at timestamps; filter them in queries. See [[users-table-schema]].
+</ADD_FACT>
+\`\`\`
 
 ## Memory maintenance
 
 - Working memory does not survive the session. If it matters, \`<ADD_FACT>\` it.
 - "Remember this" from the operator always means: emit an \`<ADD_FACT>\`.
+- Before adding, check MEMORY_PALACE_CONTEXT for a memory that already covers
+  it; propose replacing that one (say so explicitly) instead of duplicating.
+- Do not save what the chat history already shows or what only matters this
+  session. If asked to remember one of those, ask what was non-obvious about it
+  and save that instead.
 - Learned a durable lesson about how to work here? Propose it into AGENTS.md.
 - Spot a stale or wrong fact in MEMORY_PALACE_CONTEXT? Say so and propose the fix.
 
@@ -262,6 +359,7 @@ never nest tags inside tags.
 function ts(): string {
   return new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
+
 
 export default function Home() {
   const [tab, setTab] = useState<'chat' | 'graph' | 'palace' | 'persona'>('chat');
@@ -305,6 +403,7 @@ export default function Home() {
   const [projectMemories, setProjectMemories] = useState<ProjectMemory[]>([]);
   const [activeRoom, setActiveRoom] = useState(ROOMS[0]);
   const [newFact, setNewFact] = useState('');
+  const [newFactType, setNewFactType] = useState<MemType>('project');
 
   // OpenClaw unified markdown files
   const [projectPersonas, setProjectPersonas] = useState<ProjectPersona[]>([]);
@@ -549,13 +648,32 @@ export default function Home() {
     }));
   }, []);
 
-  const handleSend = async () => {
-    if (!message.trim() || !activeProject || !activeChatId || loading) return;
+  // Replace the in-flight streaming placeholder's text (or finalize it).
+  const updateStreamingMessage = useCallback((chatId: string, text: string, streaming: boolean) => {
+    setMessagesByChat(prev => {
+      const msgs = [...(prev[chatId] || [])];
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        if (msgs[i].streaming) {
+          msgs[i] = { ...msgs[i], text, streaming };
+          break;
+        }
+      }
+      return { ...prev, [chatId]: msgs };
+    });
+  }, []);
 
-    const userMsgText = message;
-    const userMsg: Message = { role: 'user', text: userMsgText, timestamp: ts() };
-    addMessage(activeChatId, userMsg);
-    setMessage('');
+  const removeStreamingPlaceholder = useCallback((chatId: string) => {
+    setMessagesByChat(prev => ({
+      ...prev,
+      [chatId]: (prev[chatId] || []).filter(m => !m.streaming),
+    }));
+  }, []);
+
+  const sendChatMessage = async (userMsgText: string) => {
+    if (!userMsgText.trim() || !activeProject || !activeChatId || loading) return;
+    const chatId = activeChatId;
+
+    addMessage(chatId, { role: 'user', text: userMsgText, timestamp: ts() });
     setLoading(true);
 
     // Resolve specific selected Agent profile configuration
@@ -578,68 +696,77 @@ export default function Home() {
         body: JSON.stringify({
           projectId: activeProject.id,
           projectName: activeProject.name,
-          chatId: activeChatId,
+          chatId,
           message: userMsgText,
-          history: currentMessages, // Send previous messages from client state
           model: finalModel,
-          projectMemories: projectMemories, 
-          projectPersonas: projectPersonas,   
           agentName: selectedAgent ? selectedAgent.name : 'GENERAL_HELPER',
-          agentPersonas: agentDetails
+          agentPersonas: agentDetails,
+          // The server fetches history/memories/personas from Supabase itself;
+          // these ride along only for Supabase-less local setups.
+          ...(supabase ? {} : {
+            history: currentMessages,
+            projectMemories,
+            projectPersonas,
+          }),
         }),
       });
 
-      const data = await res.json();
+      if (!res.ok || !res.body) {
+        let errText = `HTTP ${res.status}`;
+        try {
+          const data = await res.json();
+          errText = data.error || errText;
+        } catch {}
+        addMessage(chatId, { role: 'system', text: `[ ERROR ] ${errText}`, timestamp: ts() });
+        setLoading(false);
+        return;
+      }
 
-      if (data.success && !data.response) {
-        addMessage(activeChatId, {
-          role: 'system',
-          text: '[ ERROR ] Model returned an empty response. Retry or switch models.',
-          timestamp: ts(),
-        });
-      } else if (data.success) {
-        addMessage(activeChatId, {
-          role: 'assistant',
-          text: data.response,
-          timestamp: ts(),
-        });
+      // Consume the SSE stream into a live placeholder message.
+      addMessage(chatId, { role: 'assistant', text: '', timestamp: ts(), streaming: true });
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let acc = '';
+      let streamError: string | null = null;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith('data:')) continue;
+          try {
+            const evt = JSON.parse(trimmed.slice(5).trim());
+            if (typeof evt.delta === 'string') {
+              acc += evt.delta;
+              updateStreamingMessage(chatId, acc, true);
+            }
+            if (evt.error) streamError = String(evt.error);
+          } catch {}
+        }
+      }
+
+      if (acc) {
+        updateStreamingMessage(chatId, acc, false);
         setGraphRefresh(prev => prev + 1);
-
-        // Upload both newly added messages to Supabase if logged in
-        if (supabase) {
-          // Upload user message
-          const { data: userDbMsg } = await supabase.from('memories').insert({
-            project_id: activeProject.id,
-            chat_id: activeChatId,
-            content: userMsgText,
-            role: 'user',
-            metadata: {},
-            parent_id: null,
-            timestamp: new Date().toISOString()
-          }).select('id').single();
-
-          // Upload assistant message
-          if (userDbMsg) {
-            await supabase.from('memories').insert({
-              project_id: activeProject.id,
-              chat_id: activeChatId,
-              content: data.response,
-              role: 'assistant',
-              metadata: { model: finalModel, agentName: data.agentName },
-              parent_id: userDbMsg.id,
-              timestamp: new Date().toISOString()
-            });
-          }
+        if (streamError) {
+          addMessage(chatId, { role: 'system', text: `[ ERROR ] ${streamError}`, timestamp: ts() });
         }
       } else {
-        addMessage(activeChatId, {
+        removeStreamingPlaceholder(chatId);
+        addMessage(chatId, {
           role: 'system',
-          text: `[ ERROR ] ${data.error}`,
+          text: `[ ERROR ] ${streamError || 'Model returned an empty response. Retry or switch models.'}`,
           timestamp: ts(),
         });
       }
     } catch (e) {
-      addMessage(activeChatId, {
+      removeStreamingPlaceholder(chatId);
+      addMessage(chatId, {
         role: 'system',
         text: `[ FATAL ] Failed to reach context engine. (${e instanceof Error ? e.message : 'unknown error'})`,
         timestamp: ts(),
@@ -647,6 +774,13 @@ export default function Home() {
     }
 
     setLoading(false);
+  };
+
+  const handleSend = async () => {
+    if (!message.trim() || loading) return;
+    const text = message;
+    setMessage('');
+    await sendChatMessage(text);
   };
 
   const handleDeleteProject = async (projectId: string, e: React.MouseEvent) => {
@@ -696,21 +830,40 @@ export default function Home() {
     }
   };
 
+  // Fire-and-forget: embed newly saved memories for hybrid recall.
+  const embedMemories = useCallback((ids: string[]) => {
+    if (!supabase || ids.length === 0) return;
+    supabase.functions.invoke('embed', { body: { ids } }).catch(() => {});
+  }, []);
+
+  // Saved memories replace by slug (unique per project) so approving the same
+  // card twice, or superseding by name, never duplicates.
+  const upsertMemoryState = useCallback((rows: ProjectMemory[]) => {
+    setProjectMemories(prev => {
+      const replaced = new Set(rows.map(r => r.id));
+      return [...prev.filter(m => !replaced.has(m.id)), ...rows];
+    });
+    setGraphRefresh(prev => prev + 1);
+  }, []);
+
   // MemPalace facts CRUD
   const handleAddFact = async () => {
     if (!newFact.trim() || !activeProject || !supabase) return;
     try {
       const { data } = await supabase
         .from('project_memories')
-        .insert({
+        .upsert({
           project_id: activeProject.id,
           room_name: activeRoom,
-          fact_content: newFact.trim()
-        })
+          fact_content: newFact.trim(),
+          name: slugify(newFact),
+          mem_type: newFactType,
+        }, { onConflict: 'project_id,name' })
         .select();
       if (data) {
-        setProjectMemories(prev => [...prev, ...data]);
+        upsertMemoryState(data);
         setNewFact('');
+        embedMemories(data.map(d => d.id));
       }
     } catch {}
   };
@@ -724,6 +877,7 @@ export default function Home() {
         .eq('id', factId);
       if (!error) {
         setProjectMemories(prev => prev.filter(f => f.id !== factId));
+        setGraphRefresh(prev => prev + 1);
       }
     } catch {}
   };
@@ -850,19 +1004,27 @@ export default function Home() {
 
 
   // Proactive execution methods
-  const executeAddFact = async (room: string, content: string) => {
+  const executeAddFact = async (
+    room: string,
+    content: string,
+    meta: { name?: string; description?: string; type?: string } = {}
+  ) => {
     if (!activeProject || !supabase) return;
     try {
       const { data } = await supabase
         .from('project_memories')
-        .insert({
+        .upsert({
           project_id: activeProject.id,
           room_name: room,
-          fact_content: content.trim()
-        })
+          fact_content: content.trim(),
+          name: (meta.name || slugify(content)).trim(),
+          description: meta.description?.trim() || null,
+          mem_type: meta.type && isMemType(meta.type) ? meta.type : 'project',
+        }, { onConflict: 'project_id,name' })
         .select();
       if (data) {
-        setProjectMemories(prev => [...prev, ...data]);
+        upsertMemoryState(data);
+        embedMemories(data.map(d => d.id));
       }
     } catch {}
   };
@@ -943,8 +1105,8 @@ export default function Home() {
     let currentIndex = 0;
     
     // We match PROPOSE_EDIT, ADD_FACT, CREATE_AGENT, ASK_USER
-    const combinedRegex = /<(PROPOSE_EDIT|ADD_FACT|CREATE_AGENT|ASK_USER)(?:\s+(?:file|room|name)="([^"]+)")?>([\s\S]*?)<\/\1>/g;
-    
+    const combinedRegex = /<(PROPOSE_EDIT|ADD_FACT|CREATE_AGENT|ASK_USER)((?:\s+[a-zA-Z_]+="[^"]*")*)\s*>([\s\S]*?)<\/\1>/g;
+
     let match;
     while ((match = combinedRegex.exec(msgText)) !== null) {
       if (match.index > currentIndex) {
@@ -955,9 +1117,10 @@ export default function Home() {
           </div>
         );
       }
-      
+
       const tag = match[1];
-      const attrValue = match[2];
+      const attrs = parseTagAttrs(match[2]);
+      const attrValue = attrs.file || attrs.room || attrs.name || '';
       const content = match[3].trim();
       
       if (tag === 'PROPOSE_EDIT') {
@@ -969,28 +1132,32 @@ export default function Home() {
           </div>
         );
       } else if (tag === 'ADD_FACT') {
+        const memName = attrs.name || slugify(content);
+        const memType = attrs.type && isMemType(attrs.type) ? attrs.type : 'project';
         elements.push(
           <div key={`fact-${match.index}`} style={{ border: '1px solid var(--grid-thick)', padding: '12px', margin: '8px 0', background: 'rgba(255, 255, 255, 0.02)' }}>
-            <samp style={{ color: 'var(--green)', display: 'block', marginBottom: '8px' }}>[ NEW MEMORY FACT: {attrValue} ]</samp>
+            <samp style={{ color: 'var(--green)', display: 'block', marginBottom: '4px' }}>[ NEW MEMORY: {attrValue} ]</samp>
+            <samp style={{ display: 'block', marginBottom: '8px', fontSize: 'var(--micro)', color: 'var(--fg-dim)' }}>
+              {memName} · {memType.toUpperCase()}{attrs.description ? ` — ${attrs.description}` : ''}
+            </samp>
             <pre style={{ fontSize: 'var(--micro)', color: 'var(--fg-dim)', marginBottom: '8px', whiteSpace: 'pre-wrap' }}>{content}</pre>
-            <button className="tab-btn" style={{ background: 'var(--bg-raised)' }} onClick={() => executeAddFact(attrValue, content)}>STORE IN MEM_PALACE</button>
+            <button
+              className="tab-btn"
+              style={{ background: 'var(--bg-raised)' }}
+              onClick={() => executeAddFact(attrValue, content, { name: attrs.name, description: attrs.description, type: attrs.type })}
+            >
+              STORE IN MEM_PALACE
+            </button>
           </div>
         );
       } else if (tag === 'ASK_USER') {
         elements.push(
-          <div key={`ask-${match.index}`} style={{ border: '1px solid var(--amber, #d97706)', padding: '12px', margin: '8px 0', background: 'rgba(217, 119, 6, 0.06)' }}>
-            <samp style={{ color: 'var(--amber, #d97706)', display: 'block', marginBottom: '8px' }}>[ AGENT QUESTION ]</samp>
-            <div className="markdown-body" style={{ marginBottom: '8px' }}>
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
-            </div>
-            <button
-              className="tab-btn"
-              style={{ background: 'var(--bg-raised)' }}
-              onClick={() => document.querySelector<HTMLInputElement>('.compose-bar input, .compose-input')?.focus()}
-            >
-              ANSWER BELOW
-            </button>
-          </div>
+          <AskUserCard
+            key={`ask-${match.index}`}
+            content={content}
+            disabled={loading}
+            onAnswer={sendChatMessage}
+          />
         );
       } else if (tag === 'CREATE_AGENT') {
         elements.push(
@@ -1357,13 +1524,16 @@ export default function Home() {
                 <div className="msg-list">
                   {currentMessages.map((msg, i) => (
                     <div key={i} className={`msg-block ${msg.role === 'user' ? 'from-user' : ''}`}>
-                      <samp className="msg-tag">{tagFor(msg.role)} {msg.timestamp}</samp>
+                      <samp className="msg-tag">
+                        {tagFor(msg.role)} {msg.timestamp}{msg.streaming ? ' — STREAMING' : ''}
+                      </samp>
                       <div className="msg-body">
-                        {renderMessageContent(msg.text)}
+                        {renderMessageContent(msg.streaming ? stripIncompleteTagTail(msg.text) : msg.text)}
+                        {msg.streaming && <samp className="loading-text">▋</samp>}
                       </div>
                     </div>
                   ))}
-                  {loading && (
+                  {loading && !currentMessages.some(m => m.streaming) && (
                     <div className="msg-block">
                       <samp className="msg-tag">{"< PROCESSING >"} {ts()}</samp>
                       <div className="msg-body">
@@ -1423,9 +1593,12 @@ export default function Home() {
               <div className="input-zone">
                 <div className="skills-bar">
                   <samp className="skills-label">[ LEGEND ]</samp>
-                  <samp className="legend-item legend-user">■ USER</samp>
-                  <samp className="legend-item legend-ai">■ ASSISTANT</samp>
-                  <samp className="legend-item legend-sys">■ SYSTEM</samp>
+                  <samp className="legend-item" style={{ color: '#EAEAEA' }}>■ USER</samp>
+                  <samp className="legend-item" style={{ color: '#E61919' }}>■ FEEDBACK</samp>
+                  <samp className="legend-item" style={{ color: '#19B36B' }}>■ PROJECT</samp>
+                  <samp className="legend-item" style={{ color: '#D97706' }}>■ REFERENCE</samp>
+                  <samp className="legend-item" style={{ color: '#666666' }}>□ ROOM</samp>
+                  <samp className="legend-item" style={{ color: '#E61919' }}>— [[LINK]]</samp>
                 </div>
               </div>
             </>
@@ -1454,7 +1627,13 @@ export default function Home() {
                   ) : (
                     roomFacts.map(fact => (
                       <div className="fact-item" key={fact.id}>
-                        <div className="fact-text">{fact.fact_content}</div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <samp style={{ display: 'block', fontSize: 'var(--micro)', color: 'var(--fg-dim)', marginBottom: '2px' }}>
+                            {fact.name || 'unnamed'} · {(fact.mem_type || 'project').toUpperCase()}
+                            {fact.description ? ` — ${fact.description}` : ''}
+                          </samp>
+                          <div className="fact-text">{fact.fact_content}</div>
+                        </div>
                         <button className="delete-fact-btn" onClick={() => handleDeleteFact(fact.id)}>
                           [ DELETE ]
                         </button>
@@ -1464,6 +1643,16 @@ export default function Home() {
                 </div>
 
                 <div className="add-fact-row" style={{ marginTop: 'auto' }}>
+                  <select
+                    className="model-select"
+                    style={{ width: 'auto' }}
+                    value={newFactType}
+                    onChange={e => setNewFactType(e.target.value as MemType)}
+                  >
+                    {MEM_TYPES.map(t => (
+                      <option key={t} value={t}>{t.toUpperCase()}</option>
+                    ))}
+                  </select>
                   <input
                     className="fact-input"
                     value={newFact}
