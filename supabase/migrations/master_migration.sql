@@ -146,3 +146,21 @@ CREATE POLICY "operator attachments" ON storage.objects
   FOR ALL TO authenticated
   USING (bucket_id = 'attachments' AND private.is_operator())
   WITH CHECK (bucket_id = 'attachments' AND private.is_operator());
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- MCP connectors (operator-registered remote MCP servers). Applied 2026-07-03
+-- as migration "connectors".
+CREATE TABLE IF NOT EXISTS public.connectors (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name text NOT NULL UNIQUE,
+  url text NOT NULL,
+  auth_token text,
+  enabled boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE public.connectors ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "operator connectors" ON public.connectors;
+CREATE POLICY "operator connectors" ON public.connectors
+  FOR ALL TO authenticated
+  USING (private.is_operator())
+  WITH CHECK (private.is_operator());

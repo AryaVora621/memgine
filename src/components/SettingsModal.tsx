@@ -1,10 +1,18 @@
 "use client";
 
 import { useState, useEffect } from 'react';
+import { supabase } from '@/lib/supabaseClient';
 
 interface SettingsModalProps {
   open: boolean;
   onClose: () => void;
+}
+
+interface ConnectorRow {
+  id: string;
+  name: string;
+  url: string;
+  enabled: boolean;
 }
 
 export default function SettingsModal({ open, onClose }: SettingsModalProps) {
@@ -17,6 +25,16 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
   const [status, setStatus] = useState('');
   const [loading, setLoading] = useState(false);
 
+  const [connectors, setConnectors] = useState<ConnectorRow[]>([]);
+  const [newConn, setNewConn] = useState({ name: '', url: '', token: '' });
+  const [connStatus, setConnStatus] = useState('');
+
+  const loadConnectors = () => {
+    if (!supabase) return;
+    supabase.from('connectors').select('id, name, url, enabled').order('created_at')
+      .then(({ data }) => { if (data) setConnectors(data); });
+  };
+
   useEffect(() => {
     if (open) {
       fetch('/api/settings')
@@ -25,8 +43,56 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
           if (data.apiKeys) setKeys(data.apiKeys);
         })
         .catch(() => {});
+      loadConnectors();
+      queueMicrotask(() => setConnStatus(''));
     }
   }, [open]);
+
+  const addConnector = async () => {
+    if (!supabase || !newConn.name.trim() || !newConn.url.trim()) return;
+    const name = newConn.name.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+    const { error } = await supabase.from('connectors').insert({
+      name,
+      url: newConn.url.trim(),
+      auth_token: newConn.token.trim() || null,
+    });
+    setConnStatus(error ? `ERROR: ${error.message}` : `ADDED ${name}`);
+    if (!error) {
+      setNewConn({ name: '', url: '', token: '' });
+      loadConnectors();
+    }
+  };
+
+  const toggleConnector = async (conn: ConnectorRow) => {
+    if (!supabase) return;
+    await supabase.from('connectors').update({ enabled: !conn.enabled }).eq('id', conn.id);
+    loadConnectors();
+  };
+
+  const deleteConnector = async (conn: ConnectorRow) => {
+    if (!supabase) return;
+    await supabase.from('connectors').delete().eq('id', conn.id);
+    loadConnectors();
+  };
+
+  const testConnectors = async () => {
+    if (!supabase) return;
+    setConnStatus('TESTING…');
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData.session?.access_token;
+    try {
+      const res = await fetch('/api/tools', {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      const json = await res.json();
+      if (!json.success) throw new Error(json.error || 'request failed');
+      const parts = (json.connectors as { name: string; status: string; tools: unknown[] }[])
+        .map(c => `${c.name}: ${c.status === 'online' ? `${c.tools.length} TOOLS` : c.status.toUpperCase()}`);
+      setConnStatus(parts.join(' · ') || 'NO CONNECTORS');
+    } catch (e) {
+      setConnStatus(`ERROR: ${e instanceof Error ? e.message : 'test failed'}`);
+    }
+  };
 
   const handleSave = async () => {
     setLoading(true);
@@ -80,18 +146,70 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
           <div className="field-row" style={{ marginTop: '12px' }}>
             <label className="field-label">THEME COLOR</label>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <input 
-                type="color" 
+              <input
+                type="color"
                 defaultValue={typeof document !== 'undefined' ? getComputedStyle(document.documentElement).getPropertyValue('--red').trim() || '#E61919' : '#E61919'}
                 onChange={(e) => {
                   document.documentElement.style.setProperty('--red', e.target.value);
                   localStorage.setItem('memgine-theme-color', e.target.value);
-                }} 
+                }}
                 style={{ background: 'transparent', border: '1px solid var(--grid-thick)', cursor: 'pointer', height: '28px', padding: 0 }}
               />
               <samp style={{ fontSize: 'var(--micro)', color: 'var(--fg-dim)' }}>SELECT ACCENT</samp>
             </div>
           </div>
+
+          <hr className="modal-hr" style={{ margin: '16px 0' }} />
+          <samp style={{ display: 'block', marginBottom: '8px' }}>[ CONNECTORS / MCP ]</samp>
+          <samp style={{ display: 'block', marginBottom: '8px', fontSize: 'var(--micro)', color: 'var(--fg-dim)' }}>
+            REMOTE MCP SERVERS. THEIR TOOLS BECOME AVAILABLE TO THE AGENT (APPROVAL-GATED).
+          </samp>
+
+          {connectors.map(conn => (
+            <div key={conn.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+              <samp style={{ fontSize: 'var(--micro)', flex: 1, color: conn.enabled ? 'var(--fg)' : 'var(--fg-dim)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {conn.name} · {conn.url}
+              </samp>
+              <button className="tab-btn" style={{ fontSize: 'var(--micro)' }} onClick={() => toggleConnector(conn)}>
+                {conn.enabled ? 'ON' : 'OFF'}
+              </button>
+              <button className="tab-btn" style={{ fontSize: 'var(--micro)', color: 'var(--red)' }} onClick={() => deleteConnector(conn)}>
+                [X]
+              </button>
+            </div>
+          ))}
+
+          <div className="field-row">
+            <label className="field-label">NAME</label>
+            <input className="field-input" value={newConn.name} spellCheck={false}
+              onChange={e => setNewConn(prev => ({ ...prev, name: e.target.value }))}
+              placeholder="github" />
+          </div>
+          <div className="field-row">
+            <label className="field-label">URL</label>
+            <input className="field-input" value={newConn.url} spellCheck={false}
+              onChange={e => setNewConn(prev => ({ ...prev, url: e.target.value }))}
+              placeholder="https://api.example.com/mcp" />
+          </div>
+          <div className="field-row">
+            <label className="field-label">TOKEN</label>
+            <input className="field-input" type="password" autoComplete="new-password" value={newConn.token} spellCheck={false}
+              onChange={e => setNewConn(prev => ({ ...prev, token: e.target.value }))}
+              placeholder="BEARER TOKEN (OPTIONAL)" />
+          </div>
+          <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
+            <button className="tab-btn" onClick={addConnector} disabled={!newConn.name.trim() || !newConn.url.trim()}>
+              [ ADD CONNECTOR ]
+            </button>
+            <button className="tab-btn" onClick={testConnectors} disabled={connectors.length === 0}>
+              [ TEST ]
+            </button>
+          </div>
+          {connStatus && (
+            <samp style={{ display: 'block', marginTop: '6px', fontSize: 'var(--micro)', color: connStatus.startsWith('ERROR') ? 'var(--red)' : 'var(--fg-dim)' }}>
+              {connStatus}
+            </samp>
+          )}
         </div>
 
         <hr className="modal-hr" />

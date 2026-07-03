@@ -28,9 +28,22 @@
 - Skipped live: VIDEO_GEN end-to-end (expensive; code path implemented, untested
   against a real job) and STT/voice input (not built yet — on roadmap).
 
+## Also completed this session (second round)
+- Voice input: mic button -> MediaRecorder -> /api/transcribe (OpenRouter STT,
+  Voxtral primary / Whisper fallback). Verified live: TTS->STT round trip
+  transcribed correctly; route rejects unauthenticated calls (401).
+- Connectors v1 (MCP-client layer, see PLAN.md): `connectors` table (operator
+  RLS), src/lib/mcp.ts (Streamable-HTTP JSON-RPC client), /api/tools (GET
+  catalog / POST approval-gated call, result persisted as system message),
+  tool catalog injected into the chat system prompt (5-min cache), USE_TOOL
+  approval card, connectors manager in Settings. Verified live end-to-end with
+  the public DeepWiki MCP server: model emitted a valid USE_TOOL tag, RUN TOOL
+  returned the React wiki structure, follow-up turn read the result from
+  history. 22/22 vitest.
+
 ## Next action
-- Roadmap next: voice input (STT via /api/v1/audio/transcriptions), connectors
-  via an MCP-client layer.
+- Connectors v2: OAuth authorization-code flow (Google Drive, Canva, Gmail need
+  it) and optional auto-execution loops. Also VIDEO_GEN still untested live.
 
 ## Human decisions needed
 - See TASK_QUEUE.md "Open (all blocked on user)" (incl. password rotation).

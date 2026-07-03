@@ -3,6 +3,7 @@ import { loadSettings } from '@/lib/settings';
 import { callProvider, streamProvider, type ChatMessage, type ContentPart } from '@/lib/providers';
 import { ATTACHMENTS_BUCKET, type Attachment } from '@/lib/attachments';
 import { authedClient, getSupabaseEnv } from '@/lib/serverSupabase';
+import { listConnectorTools, type Connector, type McpTool } from '@/lib/mcp';
 
 // The server is the source of truth: it fetches personas, memories, and
 // history from Supabase itself (scoped to the caller's JWT so RLS applies),
@@ -30,6 +31,22 @@ interface HistoryRow {
   text?: string;
   timestamp?: string;
   metadata?: unknown;
+}
+
+// Connector tool lists change rarely; cache per connector for a few minutes so
+// chat latency doesn't pay two MCP round trips per registered server.
+const TOOLS_CACHE_TTL_MS = 5 * 60 * 1000;
+const toolsCache = new Map<string, { tools: McpTool[] | null; at: number }>();
+
+async function cachedConnectorTools(conn: Connector): Promise<McpTool[] | null> {
+  const hit = toolsCache.get(conn.id);
+  if (hit && Date.now() - hit.at < TOOLS_CACHE_TTL_MS) return hit.tools;
+  let tools: McpTool[] | null = null;
+  try {
+    tools = await listConnectorTools(conn);
+  } catch {}
+  toolsCache.set(conn.id, { tools, at: Date.now() });
+  return tools;
 }
 
 // Query embedding via the `embed` edge function (built-in gte-small model).
@@ -230,6 +247,44 @@ export async function POST(req: Request) {
 
     const memoriesContext = buildMemoriesContext(allMemories, recalledMemories);
 
+    // ── Connector tool catalog (MCP), cached briefly to avoid per-message
+    // handshakes with every registered server ──
+    let toolsContext = '';
+    if (auth) {
+      const { data: connRows } = await auth.db.from('connectors').select('*').eq('enabled', true);
+      const conns = (connRows || []) as Connector[];
+      if (conns.length > 0) {
+        const catalogs = await Promise.all(conns.map(async c => ({
+          name: c.name,
+          tools: await cachedConnectorTools(c),
+        })));
+        const lines: string[] = [];
+        for (const cat of catalogs) {
+          if (!cat.tools) { lines.push(`- ${cat.name}: OFFLINE (tool list unavailable)`); continue; }
+          for (const t of cat.tools) {
+            const params = t.inputSchema ? JSON.stringify((t.inputSchema as { properties?: object }).properties || {}) : '{}';
+            lines.push(`- ${cat.name}.${t.name}: ${(t.description || '').replace(/\s+/g, ' ').slice(0, 200)} | args: ${params.slice(0, 300)}`);
+          }
+        }
+        if (lines.length > 0) {
+          toolsContext = `
+
+# CONNECTED TOOLS (MCP CONNECTORS)
+The operator has connected external services. Available tools:
+${lines.join('\n')}
+
+To use a tool, output on its own lines:
+<USE_TOOL connector="[connector]" tool="[tool_name]">
+{"arg": "value"}
+</USE_TOOL>
+The body must be a single JSON object matching the tool's args (use {} when no
+args). The tag renders as a card with a RUN TOOL button; once the operator
+approves, the result is added to the chat as a system message you will see on
+your next turn. Never fabricate tool results — request the tool and wait.`;
+        }
+      }
+    }
+
     // ── Agent-switch detection from history metadata ──
     const isNewSession = history.length === 0;
     let agentSwitched = false;
@@ -341,7 +396,7 @@ chat history are the source of truth.
 
     const systemPrompt: ChatMessage = {
       role: 'system',
-      content: `You are an AI assistant for the project "${projectName || projectId}". You have access to the conversation history for this chat (older parts may arrive as a summary). Be helpful, precise, and remember prior context from this project's sessions.${openClawContext}${summaryContext}${memoriesContext}${proactiveCapabilities}`,
+      content: `You are an AI assistant for the project "${projectName || projectId}". You have access to the conversation history for this chat (older parts may arrive as a summary). Be helpful, precise, and remember prior context from this project's sessions.${openClawContext}${summaryContext}${memoriesContext}${proactiveCapabilities}${toolsContext}`,
     };
 
     // Resolve the user message content: text, plus vision parts for images and

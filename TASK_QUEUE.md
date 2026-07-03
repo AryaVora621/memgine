@@ -1,13 +1,15 @@
 # Task Queue
 
 ## Roadmap: full AI chat site (set 2026-07-03)
-- Media/file uploads in chat (vision input + text-file inlining) - IN PROGRESS
+- Media/file uploads in chat (vision input + text-file inlining) - DONE 2026-07-03
 - Generation skills via OpenRouter unified APIs: IMAGE_GEN, AUDIO_GEN (TTS),
-  VIDEO_GEN (async jobs), WEB_SEARCH (:online) - IN PROGRESS
-- Voice input (mic -> OpenRouter STT /api/v1/audio/transcriptions)
-- Connectors, claude.ai/ChatGPT-style: Google Drive, Canva, Notion, GitHub,
-  Gmail. Approach: OAuth-scoped integrations surfaced through an MCP-client
-  layer in Memgine so any MCP server becomes a connector.
+  VIDEO_GEN (async jobs), WEB_SEARCH (web plugin) - DONE 2026-07-03
+  (VIDEO_GEN implemented but not live-tested; runs cost real money)
+- Voice input (mic -> OpenRouter STT, Voxtral) - DONE 2026-07-03
+- Connectors v1 (MCP-client layer) - DONE 2026-07-03: register any remote MCP
+  server in Settings; its tools are injected into the system prompt and run via
+  approval-gated USE_TOOL cards. v2: OAuth flows for servers that need them
+  (Google Drive, Canva, Gmail) and auto-execution agentic loops.
 
 ## Open (all blocked on user)
 - USER: disable public email sign-ups in Supabase dashboard (Auth > Sign In/Up).

@@ -753,6 +753,44 @@ export default function Home() {
     } catch {}
   };
 
+  // Approval-gated connector tool execution (USE_TOOL cards). The server
+  // persists the result as a system message; we mirror it locally.
+  const executeUseTool = async (connector: string, tool: string, argsJson: string) => {
+    if (!activeProject || !activeChatId) return;
+    const chatId = activeChatId;
+    let args: Record<string, unknown> = {};
+    if (argsJson.trim()) {
+      try {
+        args = JSON.parse(argsJson);
+      } catch {
+        addMessage(chatId, { role: 'system', text: `[ ERROR ] Tool args are not valid JSON: ${argsJson.slice(0, 120)}`, timestamp: ts() });
+        return;
+      }
+    }
+    setLoading(true);
+    try {
+      const res = await fetch('/api/tools', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+        },
+        body: JSON.stringify({ connector, tool, args, projectId: activeProject.id, chatId }),
+      });
+      const json = await res.json();
+      addMessage(chatId, {
+        role: 'system',
+        text: json.success
+          ? `[ TOOL_RESULT / ${connector}.${tool} ]\n${json.text}`
+          : `[ ERROR ] Tool call failed: ${json.error}`,
+        timestamp: ts(),
+      });
+    } catch (e) {
+      addMessage(chatId, { role: 'system', text: `[ FATAL ] Tool call failed. (${e instanceof Error ? e.message : 'unknown'})`, timestamp: ts() });
+    }
+    setLoading(false);
+  };
+
   // Generation skills: prompt -> /api/generate -> stored media + persisted
   // messages. Video is an async job polled until it completes.
   const runGeneration = async (kind: 'image' | 'audio' | 'video', prompt: string) => {
@@ -1256,7 +1294,7 @@ export default function Home() {
     let currentIndex = 0;
     
     // We match PROPOSE_EDIT, ADD_FACT, CREATE_AGENT, ASK_USER
-    const combinedRegex = /<(PROPOSE_EDIT|ADD_FACT|CREATE_AGENT|ASK_USER)((?:\s+[a-zA-Z_]+="[^"]*")*)\s*>([\s\S]*?)<\/\1>/g;
+    const combinedRegex = /<(PROPOSE_EDIT|ADD_FACT|CREATE_AGENT|ASK_USER|USE_TOOL)((?:\s+[a-zA-Z_]+="[^"]*")*)\s*>([\s\S]*?)<\/\1>/g;
 
     let match;
     while ((match = combinedRegex.exec(msgText)) !== null) {
@@ -1309,6 +1347,25 @@ export default function Home() {
             disabled={loading}
             onAnswer={sendChatMessage}
           />
+        );
+      } else if (tag === 'USE_TOOL') {
+        const connector = attrs.connector || '';
+        const toolName = attrs.tool || '';
+        elements.push(
+          <div key={`tool-${match.index}`} style={{ border: '1px solid var(--grid-thick)', padding: '12px', margin: '8px 0', background: 'rgba(255, 255, 255, 0.02)' }}>
+            <samp style={{ color: '#D97706', display: 'block', marginBottom: '8px' }}>[ TOOL REQUEST: {connector}.{toolName} ]</samp>
+            {content && content !== '{}' && (
+              <pre style={{ fontSize: 'var(--micro)', color: 'var(--fg-dim)', maxHeight: '150px', overflowY: 'auto', marginBottom: '8px', whiteSpace: 'pre-wrap' }}>{content}</pre>
+            )}
+            <button
+              className="tab-btn"
+              style={{ background: 'var(--bg-raised)' }}
+              disabled={loading}
+              onClick={() => executeUseTool(connector, toolName, content)}
+            >
+              RUN TOOL
+            </button>
+          </div>
         );
       } else if (tag === 'CREATE_AGENT') {
         elements.push(

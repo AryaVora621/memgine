@@ -115,3 +115,18 @@ describe('stripIncompleteTagTail', () => {
     );
   });
 });
+
+describe('USE_TOOL tag', () => {
+  it('extracts connector/tool attrs and JSON body', () => {
+    const text = 'run this:\n<USE_TOOL connector="github" tool="search_issues">{"query":"bug"}</USE_TOOL>';
+    const tags = extractTags(text);
+    expect(tags).toHaveLength(1);
+    expect(tags[0].tag).toBe('USE_TOOL');
+    expect(tags[0].attrs.connector).toBe('github');
+    expect(tags[0].attrs.tool).toBe('search_issues');
+    expect(JSON.parse(tags[0].content)).toEqual({ query: 'bug' });
+  });
+  it('hides an unclosed USE_TOOL mid-stream', () => {
+    expect(stripIncompleteTagTail('ok\n<USE_TOOL connector="a" tool="b">{"x"')).toBe('ok\n');
+  });
+});

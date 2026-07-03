@@ -8,7 +8,7 @@ export type MemType = 'user' | 'feedback' | 'project' | 'reference';
 
 export const MEM_TYPES: MemType[] = ['user', 'feedback', 'project', 'reference'];
 
-export const AGENT_TAGS = ['PROPOSE_EDIT', 'ADD_FACT', 'CREATE_AGENT', 'ASK_USER'] as const;
+export const AGENT_TAGS = ['PROPOSE_EDIT', 'ADD_FACT', 'CREATE_AGENT', 'ASK_USER', 'USE_TOOL'] as const;
 export type AgentTag = (typeof AGENT_TAGS)[number];
 
 export function isMemType(value: string): value is MemType {
@@ -47,7 +47,7 @@ export interface ParsedTag {
  * names) are left in place and render as plain text rather than throwing.
  */
 export function extractTags(text: string): ParsedTag[] {
-  const combined = /<(PROPOSE_EDIT|ADD_FACT|CREATE_AGENT|ASK_USER)((?:\s+[a-zA-Z_]+="[^"]*")*)\s*>([\s\S]*?)<\/\1>/g;
+  const combined = /<(PROPOSE_EDIT|ADD_FACT|CREATE_AGENT|ASK_USER|USE_TOOL)((?:\s+[a-zA-Z_]+="[^"]*")*)\s*>([\s\S]*?)<\/\1>/g;
   const out: ParsedTag[] = [];
   let m;
   while ((m = combined.exec(text)) !== null) {
@@ -89,7 +89,7 @@ export function parseAskUserContent(content: string): { question: string; option
  * source never flashes in the UI; the card appears once the close tag lands.
  */
 export function stripIncompleteTagTail(text: string): string {
-  const opener = /<(PROPOSE_EDIT|ADD_FACT|CREATE_AGENT|ASK_USER)(?:\s|>|$)/g;
+  const opener = /<(PROPOSE_EDIT|ADD_FACT|CREATE_AGENT|ASK_USER|USE_TOOL)(?:\s|>|$)/g;
   let lastOpen = -1;
   let lastTag = '';
   let m;
