@@ -41,9 +41,22 @@
   returned the React wiki structure, follow-up turn read the result from
   history. 22/22 vitest.
 
+## Third round (2026-07-03 later)
+- UI fixes: compose-row grid was 3-col and the mic button broke it (fixed to
+  4-col); new .action-btn class replaces borderless tab-btn in connectors UI.
+- OAuth connectors shipped (src/lib/mcpOauth.ts, /api/oauth, /oauth/callback):
+  discovery + dynamic client registration + PKCE + refresh. Verified live:
+  Canva and Notion hosted MCP servers both registered Memgine as a client and
+  returned real authorization URLs; Canva's consent screen loads with full MCP
+  scopes. Canva + Notion connectors are pre-registered in Settings — the
+  operator just clicks CONNECT and logs in.
+- Gmail/Google Drive: Google has no public hosted MCP endpoint; needs a native
+  Google OAuth integration or a third-party Gmail MCP server (v2 decision).
+
 ## Next action
-- Connectors v2: OAuth authorization-code flow (Google Drive, Canva, Gmail need
-  it) and optional auto-execution loops. Also VIDEO_GEN still untested live.
+- Operator: click CONNECT on canva/notion in Settings to finish the grant.
+- v2 candidates: auto-execution tool loops, native Google integration,
+  VIDEO_GEN live test.
 
 ## Human decisions needed
 - See TASK_QUEUE.md "Open (all blocked on user)" (incl. password rotation).
