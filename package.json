@@ -10,8 +10,10 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@supabase/supabase-js": "^2.110.0",
     "@vercel/sandbox": "^2.4.0",
+    "fetch-to-node": "^2.1.0",
     "framer-motion": "^12.42.2",
     "lucide-react": "^1.22.0",
     "next": "16.2.9",
@@ -20,7 +22,8 @@
     "react-force-graph-2d": "^1.29.1",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
-    "uuid": "^14.0.1"
+    "uuid": "^14.0.1",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/node": "^20",

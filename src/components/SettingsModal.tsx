@@ -32,6 +32,23 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
   const [connStatus, setConnStatus] = useState('');
 
   const [autoAccept, setAutoAccept] = useState(false);
+  const [mcpKeySet, setMcpKeySet] = useState(false);
+  const [mcpNewKey, setMcpNewKey] = useState('');
+  const [mcpStatus, setMcpStatus] = useState('');
+
+  const regenerateMcpKey = async () => {
+    setMcpStatus('GENERATING...');
+    try {
+      const res = await fetch('/api/mcp/key', { method: 'POST' });
+      const data = await res.json();
+      if (!data.success) { setMcpStatus(`ERROR: ${data.error}`); return; }
+      setMcpNewKey(data.key);
+      setMcpKeySet(true);
+      setMcpStatus('');
+    } catch {
+      setMcpStatus('ERROR: request failed');
+    }
+  };
 
   const toggleAutoAccept = async () => {
     const next = !autoAccept;
@@ -57,9 +74,14 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
       loadConnectors();
       queueMicrotask(() => setConnStatus(''));
       if (supabase) {
-        supabase.from('operator_settings').select('auto_accept').eq('id', true).single()
-          .then(({ data }) => { if (data) setAutoAccept(!!data.auto_accept); });
+        supabase.from('operator_settings').select('auto_accept, mcp_key_hash').eq('id', true).single()
+          .then(({ data }) => {
+            if (data) setAutoAccept(!!data.auto_accept);
+            setMcpKeySet(!!data?.mcp_key_hash);
+          });
       }
+      setMcpNewKey('');
+      setMcpStatus('');
     }
   }, [open]);
 
@@ -212,6 +234,28 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
               GLOBAL, ACROSS ALL CHATS/PROJECTS. EVERYTHING EXCEPT ASK_USER.
             </samp>
           </div>
+
+          <hr className="modal-hr" style={{ margin: '16px 0' }} />
+          <samp style={{ display: 'block', marginBottom: '8px' }}>[ MCP SERVER — LET OTHER AGENTS CONNECT IN ]</samp>
+          <samp style={{ display: 'block', marginBottom: '8px', fontSize: 'var(--micro)', color: 'var(--fg-dim)' }}>
+            EXPOSES MEMGINE&apos;S MEMORY PALACE TO EXTERNAL MCP CLIENTS (CLAUDE DESKTOP, GEMINI, ETC.)
+            SO THEY SHARE THE SAME FACTS THIS CHAT UI READS AND WRITES.
+          </samp>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
+            <button className="action-btn" onClick={regenerateMcpKey}>
+              {mcpKeySet ? 'REGENERATE KEY' : 'GENERATE KEY'}
+            </button>
+            {mcpStatus && <samp style={{ fontSize: 'var(--micro)', color: 'var(--fg-dim)' }}>{mcpStatus}</samp>}
+          </div>
+          {mcpNewKey && (
+            <div style={{ border: '1px solid var(--grid-thick)', padding: '10px', marginBottom: '8px', background: 'rgba(255,255,255,0.02)' }}>
+              <samp style={{ display: 'block', fontSize: 'var(--micro)', color: 'var(--fg-dim)', marginBottom: '6px' }}>
+                SHOWN ONCE — COPY IT NOW. PASTE INTO YOUR MCP CLIENT&apos;S CONFIG AS A BEARER TOKEN
+                FOR <code>{typeof window !== 'undefined' ? window.location.origin : ''}/api/mcp</code>. REGENERATING REVOKES THE OLD KEY.
+              </samp>
+              <samp style={{ display: 'block', fontSize: 'var(--micro)', wordBreak: 'break-all', userSelect: 'all' }}>{mcpNewKey}</samp>
+            </div>
+          )}
 
           <hr className="modal-hr" style={{ margin: '16px 0' }} />
           <samp style={{ display: 'block', marginBottom: '8px' }}>[ CONNECTORS / MCP ]</samp>

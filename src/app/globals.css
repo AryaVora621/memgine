@@ -46,6 +46,12 @@ body {
   font-size: var(--small);
   line-height: 1.4;
   letter-spacing: 0.06em;
+  /* Standalone/full-screen PWA on iOS draws under the notch and home
+     indicator; padding-*'s env() falls back to 0 in a normal browser tab. */
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
   
   position: relative;
 }

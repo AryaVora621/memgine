@@ -246,3 +246,12 @@ CREATE POLICY "operator_settings_operator_all" ON public.operator_settings
 ALTER TABLE public.chats
   ADD COLUMN IF NOT EXISTS sandbox_id text,
   ADD COLUMN IF NOT EXISTS sandbox_last_used_at timestamptz;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Memgine as an MCP server: external agents (Claude Desktop, Gemini, etc.)
+-- authenticate with a single static key (sha256 stored, plaintext shown once
+-- at generation time) rather than a Supabase user JWT, since they aren't
+-- Supabase Auth sessions. Applied 2026-07-04 as migration "mcp_server_key".
+ALTER TABLE public.operator_settings
+  ADD COLUMN IF NOT EXISTS mcp_key_hash text,
+  ADD COLUMN IF NOT EXISTS mcp_key_created_at timestamptz;
