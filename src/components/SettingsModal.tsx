@@ -37,9 +37,15 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
   const [mcpStatus, setMcpStatus] = useState('');
 
   const regenerateMcpKey = async () => {
+    if (!supabase) return;
     setMcpStatus('GENERATING...');
     try {
-      const res = await fetch('/api/mcp/key', { method: 'POST' });
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
+      const res = await fetch('/api/mcp/key', {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
       const data = await res.json();
       if (!data.success) { setMcpStatus(`ERROR: ${data.error}`); return; }
       setMcpNewKey(data.key);
