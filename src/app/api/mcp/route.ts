@@ -4,6 +4,30 @@ import { toFetchResponse, toReqRes } from 'fetch-to-node';
 import { z } from 'zod';
 import { verifyMcpKey } from '@/lib/mcpServerAuth';
 import { GLOBAL_PROJECT_ID } from '@/lib/tags';
+import { getSupabaseEnv } from '@/lib/serverSupabase';
+
+// match_memories casts p_query straight to vector(384), so it must already be
+// a stringified embedding, not raw text. This MCP server has no user JWT (the
+// caller authenticates with a static key), so it embeds with the service-role
+// key, same as the `embed` edge function's own backfill path.
+async function embedQuery(text: string): Promise<string | null> {
+  const env = getSupabaseEnv();
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!env || !serviceKey) return null;
+  try {
+    const res = await fetch(`${env.url}/functions/v1/embed`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${serviceKey}` },
+      body: JSON.stringify({ text }),
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return Array.isArray(data.embedding) ? JSON.stringify(data.embedding) : null;
+  } catch {
+    return null;
+  }
+}
 
 // Memgine as an MCP *server*: any MCP-speaking agent (Claude Desktop, Gemini,
 // a CLI tool) can connect here with the operator's static key and share the
@@ -47,9 +71,10 @@ function buildServer(db: Awaited<ReturnType<typeof verifyMcpKey>> & object) {
     },
     async ({ projectId, query, limit }) => {
       const terms = query.split(/\s+/).filter(w => w.length > 2).slice(0, 8);
+      const queryEmbedding = await embedQuery(query);
       const { data, error } = await db.rpc('match_memories', {
         p_project: projectId || GLOBAL_PROJECT_ID,
-        p_query: query,
+        p_query: queryEmbedding,
         p_terms: terms,
         p_k: limit || 8,
       });
