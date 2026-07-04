@@ -8,8 +8,17 @@ export type MemType = 'user' | 'feedback' | 'project' | 'reference';
 
 export const MEM_TYPES: MemType[] = ['user', 'feedback', 'project', 'reference'];
 
-export const AGENT_TAGS = ['PROPOSE_EDIT', 'ADD_FACT', 'CREATE_AGENT', 'ASK_USER', 'USE_TOOL'] as const;
+// Sentinel project row (seeded by migration "global_memory_scope") that holds
+// memories visible from every project, alongside each project's own palace.
+export const GLOBAL_PROJECT_ID = '00000000-0000-0000-0000-000000000000';
+
+export const AGENT_TAGS = ['PROPOSE_EDIT', 'ADD_FACT', 'CREATE_AGENT', 'ASK_USER', 'USE_TOOL', 'RUN_CODE'] as const;
 export type AgentTag = (typeof AGENT_TAGS)[number];
+
+// Approval cards that a global auto-accept toggle may execute without a click.
+// ASK_USER is deliberately excluded: it's a question for the operator, not a
+// proposed action, so it always requires a manual answer.
+export const AUTO_ACCEPTABLE_TAGS: AgentTag[] = ['PROPOSE_EDIT', 'ADD_FACT', 'CREATE_AGENT', 'USE_TOOL', 'RUN_CODE'];
 
 export function isMemType(value: string): value is MemType {
   return (MEM_TYPES as string[]).includes(value);
@@ -47,7 +56,7 @@ export interface ParsedTag {
  * names) are left in place and render as plain text rather than throwing.
  */
 export function extractTags(text: string): ParsedTag[] {
-  const combined = /<(PROPOSE_EDIT|ADD_FACT|CREATE_AGENT|ASK_USER|USE_TOOL)((?:\s+[a-zA-Z_]+="[^"]*")*)\s*>([\s\S]*?)<\/\1>/g;
+  const combined = /<(PROPOSE_EDIT|ADD_FACT|CREATE_AGENT|ASK_USER|USE_TOOL|RUN_CODE)((?:\s+[a-zA-Z_]+="[^"]*")*)\s*>([\s\S]*?)<\/\1>/g;
   const out: ParsedTag[] = [];
   let m;
   while ((m = combined.exec(text)) !== null) {
@@ -89,7 +98,7 @@ export function parseAskUserContent(content: string): { question: string; option
  * source never flashes in the UI; the card appears once the close tag lands.
  */
 export function stripIncompleteTagTail(text: string): string {
-  const opener = /<(PROPOSE_EDIT|ADD_FACT|CREATE_AGENT|ASK_USER|USE_TOOL)(?:\s|>|$)/g;
+  const opener = /<(PROPOSE_EDIT|ADD_FACT|CREATE_AGENT|ASK_USER|USE_TOOL|RUN_CODE)(?:\s|>|$)/g;
   let lastOpen = -1;
   let lastTag = '';
   let m;

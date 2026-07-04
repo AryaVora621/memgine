@@ -31,6 +31,15 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
   const [newConn, setNewConn] = useState({ name: '', url: '', token: '' });
   const [connStatus, setConnStatus] = useState('');
 
+  const [autoAccept, setAutoAccept] = useState(false);
+
+  const toggleAutoAccept = async () => {
+    const next = !autoAccept;
+    setAutoAccept(next);
+    if (!supabase) return;
+    await supabase.from('operator_settings').update({ auto_accept: next, updated_at: new Date().toISOString() }).eq('id', true);
+  };
+
   const loadConnectors = () => {
     if (!supabase) return;
     supabase.from('connectors').select('id, name, url, enabled, auth_token, oauth').order('created_at')
@@ -47,6 +56,10 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
         .catch(() => {});
       loadConnectors();
       queueMicrotask(() => setConnStatus(''));
+      if (supabase) {
+        supabase.from('operator_settings').select('auto_accept').eq('id', true).single()
+          .then(({ data }) => { if (data) setAutoAccept(!!data.auto_accept); });
+      }
     }
   }, [open]);
 
@@ -183,6 +196,21 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
               />
               <samp style={{ fontSize: 'var(--micro)', color: 'var(--fg-dim)' }}>SELECT ACCENT</samp>
             </div>
+          </div>
+
+          <hr className="modal-hr" style={{ margin: '16px 0' }} />
+          <samp style={{ display: 'block', marginBottom: '8px' }}>[ APPROVAL MODE ]</samp>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '4px' }}>
+            <button
+              className="action-btn"
+              onClick={toggleAutoAccept}
+              title="When on, approval cards (memory, tools, sandbox, edits, agents) run themselves. ASK_USER always waits for you."
+            >
+              {autoAccept ? 'AUTO-ACCEPT: ON' : 'AUTO-ACCEPT: OFF'}
+            </button>
+            <samp style={{ fontSize: 'var(--micro)', color: 'var(--fg-dim)' }}>
+              GLOBAL, ACROSS ALL CHATS/PROJECTS. EVERYTHING EXCEPT ASK_USER.
+            </samp>
           </div>
 
           <hr className="modal-hr" style={{ margin: '16px 0' }} />

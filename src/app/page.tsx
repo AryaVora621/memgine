@@ -4,8 +4,9 @@ import { useState, useRef, useEffect, useCallback, useMemo, useSyncExternalStore
 import GraphView from '@/components/GraphView';
 import SettingsModal from '@/components/SettingsModal';
 import AskUserCard from '@/components/AskUserCard';
+import AutoRunOnMount from '@/components/AutoRunOnMount';
 import AttachmentView from '@/components/AttachmentView';
-import { slugify, isMemType, parseTagAttrs, stripIncompleteTagTail, MEM_TYPES, type MemType } from '@/lib/tags';
+import { slugify, isMemType, parseTagAttrs, stripIncompleteTagTail, MEM_TYPES, GLOBAL_PROJECT_ID, type MemType } from '@/lib/tags';
 import { ATTACHMENTS_BUCKET, attachmentKind, safeStorageName, formatBytes, type Attachment } from '@/lib/attachments';
 import { supabase } from '@/lib/supabaseClient';
 import type { Session } from '@supabase/supabase-js';
@@ -111,7 +112,7 @@ const AGENT_ENV_BRIEFING = `
 - Each memory is one named, typed fact: user (who the operator is), feedback (guidance on how to work, with the why), project (ongoing work and constraints), reference (pointers to external resources). Link related memories inline with [[their-name]].
 - Your tags render as cards the operator must approve; nothing is saved silently:
   <ASK_USER>one specific question with 2-4 OPTION tags</ASK_USER> when a decision is the operator's to make,
-  <ADD_FACT room="ROOM" name="kebab-case-slug" type="project" description="one-line summary">the fact</ADD_FACT> to persist what matters,
+  <ADD_FACT room="ROOM" name="kebab-case-slug" type="project" description="one-line summary" scope="global">the fact</ADD_FACT> to persist what matters (add scope="global" for facts, like who the operator is, that should follow across every project),
   <PROPOSE_EDIT file="AGENTS.md">full new content</PROPOSE_EDIT> to evolve your own rules,
   <CREATE_AGENT name="NAME">description</CREATE_AGENT> to propose a new specialist.
 - Before adding a memory, check MEMORY_PALACE_CONTEXT for one that already covers it; propose superseding instead of duplicating.
@@ -269,7 +270,9 @@ title: "AGENTS.md"
 You live inside **Memgine**, a project-based AI workspace. What the operator sees:
 
 - **PROJECTS (sidebar):** each project holds its own chats, memory, personas, and
-  sub-agents. You only ever see the active project.
+  sub-agents. You only ever see the active project. Memory has two scopes:
+  project-local (default, only this project) and GLOBAL (visible in every
+  project — used for who the operator is and cross-cutting preferences).
 - **CHAT tab:** the conversation. The operator can switch the underlying model
   (Claude, Gemini, DeepSeek, Kimi, and others) mid-conversation. Your persona and
   memory stay constant across model swaps; do not act confused when style shifts.
@@ -306,6 +309,10 @@ Output these XML tags anywhere in a reply. Each renders as an interactive card;
 - \`<ADD_FACT room="DATABASE" name="kebab-case-slug" type="project" description="One-line summary">The fact</ADD_FACT>\`
   File a long-term memory into a MemPalace room. Prefer small, atomic facts.
   See "Memory format" below for the name/type/description contract.
+  Add \`scope="global"\` to make it visible from every project, not just this
+  one — use this for \`type="user"\` facts about the operator (who they are,
+  their preferences) and any other fact that should follow them everywhere.
+  Omit \`scope\` (or use \`scope="project"\`) for anything specific to this project.
 - \`<PROPOSE_EDIT file="IDENTITY.md">Full new file content</PROPOSE_EDIT>\`
   Rewrite one of your persona files. Content is a full replacement, not a diff.
 - \`<CREATE_AGENT name="AGENT_NAME">Description and rules</CREATE_AGENT>\`
@@ -407,6 +414,7 @@ export default function Home() {
   const [activeRoom, setActiveRoom] = useState(ROOMS[0]);
   const [newFact, setNewFact] = useState('');
   const [newFactType, setNewFactType] = useState<MemType>('project');
+  const [newFactScope, setNewFactScope] = useState<'project' | 'global'>('project');
   const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
   const [uploadingFiles, setUploadingFiles] = useState(0);
   const [genMode, setGenMode] = useState<'image' | 'audio' | 'video' | null>(null);
@@ -429,6 +437,11 @@ export default function Home() {
   const [workspaceMode, setWorkspaceMode] = useState<string>('project'); // 'project' or agent ID
   const [newAgentName, setNewAgentName] = useState('');
   const [showNewAgent, setShowNewAgent] = useState(false);
+
+  // Global auto-accept: when on, approval cards execute themselves instead of
+  // waiting for a click (ASK_USER is exempt — it's a question, not an action).
+  const [autoAccept, setAutoAccept] = useState(false);
+  const autoRanKeysRef = useRef<Set<string>>(new Set());
 
   // Messages keyed by chat id
   const [messagesByChat, setMessagesByChat] = useState<Record<string, Message[]>>({});
@@ -526,6 +539,7 @@ export default function Home() {
     supabase
       .from('projects')
       .select('*')
+      .neq('id', GLOBAL_PROJECT_ID)
       .order('created_at', { ascending: true })
       .then(({ data }) => {
         if (data && data.length > 0) {
@@ -537,6 +551,26 @@ export default function Home() {
         }
       });
   }, [session]);
+
+  // Fetch the global auto-accept toggle (single operator_settings row)
+  useEffect(() => {
+    if (!supabase || !session) return;
+    supabase
+      .from('operator_settings')
+      .select('auto_accept')
+      .eq('id', true)
+      .single()
+      .then(({ data }) => {
+        if (data) setAutoAccept(!!data.auto_accept);
+      });
+  }, [session]);
+
+  const toggleAutoAccept = async () => {
+    const next = !autoAccept;
+    setAutoAccept(next);
+    if (!supabase) return;
+    await supabase.from('operator_settings').update({ auto_accept: next, updated_at: new Date().toISOString() }).eq('id', true);
+  };
 
   // Fetch chats for the active project
   useEffect(() => {
@@ -590,7 +624,7 @@ export default function Home() {
     supabase
       .from('project_memories')
       .select('*')
-      .eq('project_id', activeProjectId)
+      .in('project_id', [activeProjectId, GLOBAL_PROJECT_ID])
       .then(({ data }) => {
         if (data) setProjectMemories(data);
       });
@@ -791,6 +825,35 @@ export default function Home() {
     setLoading(false);
   };
 
+  // Approval-gated sandbox execution (RUN_CODE cards). Runs in a persistent
+  // Vercel Sandbox keyed to this chat; the server tracks lifecycle/timeouts.
+  const executeRunCode = async (runtime: string, code: string, reset: boolean) => {
+    if (!activeProject || !activeChatId) return;
+    const chatId = activeChatId;
+    setLoading(true);
+    try {
+      const res = await fetch('/api/sandbox', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+        },
+        body: JSON.stringify({ projectId: activeProject.id, chatId, runtime, code, reset }),
+      });
+      const json = await res.json();
+      addMessage(chatId, {
+        role: 'system',
+        text: json.success
+          ? `[ SANDBOX_RESULT ]\n${json.text}`
+          : `[ ERROR ] Sandbox run failed: ${json.error}`,
+        timestamp: ts(),
+      });
+    } catch (e) {
+      addMessage(chatId, { role: 'system', text: `[ FATAL ] Sandbox run failed. (${e instanceof Error ? e.message : 'unknown'})`, timestamp: ts() });
+    }
+    setLoading(false);
+  };
+
   // Generation skills: prompt -> /api/generate -> stored media + persisted
   // messages. Video is an async job polled until it completes.
   const runGeneration = async (kind: 'image' | 'audio' | 'video', prompt: string) => {
@@ -974,8 +1037,8 @@ export default function Home() {
 
   const handleDeleteProject = async (projectId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!supabase) return;
-    
+    if (!supabase || projectId === GLOBAL_PROJECT_ID) return;
+
     if (confirm('Are you sure you want to delete this project and all its data?')) {
       const { error } = await supabase.from('projects').delete().eq('id', projectId);
       if (!error) {
@@ -1042,7 +1105,7 @@ export default function Home() {
       const { data } = await supabase
         .from('project_memories')
         .upsert({
-          project_id: activeProject.id,
+          project_id: newFactScope === 'global' ? GLOBAL_PROJECT_ID : activeProject.id,
           room_name: activeRoom,
           fact_content: newFact.trim(),
           name: slugify(newFact),
@@ -1196,14 +1259,14 @@ export default function Home() {
   const executeAddFact = async (
     room: string,
     content: string,
-    meta: { name?: string; description?: string; type?: string } = {}
+    meta: { name?: string; description?: string; type?: string; scope?: string } = {}
   ) => {
     if (!activeProject || !supabase) return;
     try {
       const { data } = await supabase
         .from('project_memories')
         .upsert({
-          project_id: activeProject.id,
+          project_id: meta.scope === 'global' ? GLOBAL_PROJECT_ID : activeProject.id,
           room_name: room,
           fact_content: content.trim(),
           name: (meta.name || slugify(content)).trim(),
@@ -1289,12 +1352,12 @@ export default function Home() {
     } catch {}
   };
 
-  const renderMessageContent = (msgText: string) => {
+  const renderMessageContent = (msgText: string, msgId: string = '') => {
     const elements: React.ReactNode[] = [];
     let currentIndex = 0;
     
-    // We match PROPOSE_EDIT, ADD_FACT, CREATE_AGENT, ASK_USER
-    const combinedRegex = /<(PROPOSE_EDIT|ADD_FACT|CREATE_AGENT|ASK_USER|USE_TOOL)((?:\s+[a-zA-Z_]+="[^"]*")*)\s*>([\s\S]*?)<\/\1>/g;
+    // We match PROPOSE_EDIT, ADD_FACT, CREATE_AGENT, ASK_USER, USE_TOOL, RUN_CODE
+    const combinedRegex = /<(PROPOSE_EDIT|ADD_FACT|CREATE_AGENT|ASK_USER|USE_TOOL|RUN_CODE)((?:\s+[a-zA-Z_]+="[^"]*")*)\s*>([\s\S]*?)<\/\1>/g;
 
     let match;
     while ((match = combinedRegex.exec(msgText)) !== null) {
@@ -1313,19 +1376,25 @@ export default function Home() {
       const content = match[3].trim();
       
       if (tag === 'PROPOSE_EDIT') {
+        const cardKey = `edit-${activeChatId}-${msgId}-${match.index}`;
+        const run = () => executeEditSelf(attrValue, content);
         elements.push(
           <div key={`edit-${match.index}`} style={{ border: '1px solid var(--grid-thick)', padding: '12px', margin: '8px 0', background: 'rgba(255, 255, 255, 0.02)' }}>
             <samp style={{ color: 'var(--red)', display: 'block', marginBottom: '8px' }}>[ PROPOSED EDIT: {attrValue} ]</samp>
             <pre style={{ fontSize: 'var(--micro)', color: 'var(--fg-dim)', maxHeight: '150px', overflowY: 'auto', marginBottom: '8px', whiteSpace: 'pre-wrap' }}>{content}</pre>
-            <button className="tab-btn" style={{ background: 'var(--bg-raised)' }} onClick={() => executeEditSelf(attrValue, content)}>APPROVE EDIT</button>
+            <button className="tab-btn" style={{ background: 'var(--bg-raised)' }} onClick={run}>APPROVE EDIT</button>
+            <AutoRunOnMount cardKey={cardKey} ranSet={autoRanKeysRef.current} enabled={autoAccept} run={run} />
           </div>
         );
       } else if (tag === 'ADD_FACT') {
         const memName = attrs.name || slugify(content);
         const memType = attrs.type && isMemType(attrs.type) ? attrs.type : 'project';
+        const memScope = attrs.scope === 'global' ? 'global' : 'project';
+        const cardKey = `fact-${activeChatId}-${msgId}-${match.index}`;
+        const run = () => executeAddFact(attrValue, content, { name: attrs.name, description: attrs.description, type: attrs.type, scope: attrs.scope });
         elements.push(
           <div key={`fact-${match.index}`} style={{ border: '1px solid var(--grid-thick)', padding: '12px', margin: '8px 0', background: 'rgba(255, 255, 255, 0.02)' }}>
-            <samp style={{ color: 'var(--green)', display: 'block', marginBottom: '4px' }}>[ NEW MEMORY: {attrValue} ]</samp>
+            <samp style={{ color: 'var(--green)', display: 'block', marginBottom: '4px' }}>[ NEW MEMORY: {attrValue}{memScope === 'global' ? ' · GLOBAL' : ''} ]</samp>
             <samp style={{ display: 'block', marginBottom: '8px', fontSize: 'var(--micro)', color: 'var(--fg-dim)' }}>
               {memName} · {memType.toUpperCase()}{attrs.description ? ` — ${attrs.description}` : ''}
             </samp>
@@ -1333,10 +1402,11 @@ export default function Home() {
             <button
               className="tab-btn"
               style={{ background: 'var(--bg-raised)' }}
-              onClick={() => executeAddFact(attrValue, content, { name: attrs.name, description: attrs.description, type: attrs.type })}
+              onClick={run}
             >
-              STORE IN MEM_PALACE
+              STORE IN {memScope === 'global' ? 'GLOBAL ' : ''}MEM_PALACE
             </button>
+            <AutoRunOnMount cardKey={cardKey} ranSet={autoRanKeysRef.current} enabled={autoAccept} run={run} />
           </div>
         );
       } else if (tag === 'ASK_USER') {
@@ -1351,6 +1421,8 @@ export default function Home() {
       } else if (tag === 'USE_TOOL') {
         const connector = attrs.connector || '';
         const toolName = attrs.tool || '';
+        const cardKey = `tool-${activeChatId}-${msgId}-${match.index}`;
+        const run = () => executeUseTool(connector, toolName, content);
         elements.push(
           <div key={`tool-${match.index}`} style={{ border: '1px solid var(--grid-thick)', padding: '12px', margin: '8px 0', background: 'rgba(255, 255, 255, 0.02)' }}>
             <samp style={{ color: '#D97706', display: 'block', marginBottom: '8px' }}>[ TOOL REQUEST: {connector}.{toolName} ]</samp>
@@ -1361,18 +1433,42 @@ export default function Home() {
               className="tab-btn"
               style={{ background: 'var(--bg-raised)' }}
               disabled={loading}
-              onClick={() => executeUseTool(connector, toolName, content)}
+              onClick={run}
             >
               RUN TOOL
             </button>
+            <AutoRunOnMount cardKey={cardKey} ranSet={autoRanKeysRef.current} enabled={autoAccept} run={run} />
+          </div>
+        );
+      } else if (tag === 'RUN_CODE') {
+        const runtime = attrs.runtime || 'python';
+        const reset = attrs.reset === 'true';
+        const cardKey = `code-${activeChatId}-${msgId}-${match.index}`;
+        const run = () => executeRunCode(runtime, content, reset);
+        elements.push(
+          <div key={`code-${match.index}`} style={{ border: '1px solid var(--grid-thick)', padding: '12px', margin: '8px 0', background: 'rgba(255, 255, 255, 0.02)' }}>
+            <samp style={{ color: '#38BDF8', display: 'block', marginBottom: '8px' }}>[ RUN_CODE: {runtime}{reset ? ' · FRESH SANDBOX' : ''} ]</samp>
+            <pre style={{ fontSize: 'var(--micro)', color: 'var(--fg-dim)', maxHeight: '200px', overflowY: 'auto', marginBottom: '8px', whiteSpace: 'pre-wrap' }}>{content}</pre>
+            <button
+              className="tab-btn"
+              style={{ background: 'var(--bg-raised)' }}
+              disabled={loading}
+              onClick={run}
+            >
+              RUN IN SANDBOX
+            </button>
+            <AutoRunOnMount cardKey={cardKey} ranSet={autoRanKeysRef.current} enabled={autoAccept} run={run} />
           </div>
         );
       } else if (tag === 'CREATE_AGENT') {
+        const cardKey = `agent-${activeChatId}-${msgId}-${match.index}`;
+        const run = () => executeCreateAgent(attrValue, content);
         elements.push(
           <div key={`agent-${match.index}`} style={{ border: '1px solid var(--grid-thick)', padding: '12px', margin: '8px 0', background: 'rgba(255, 255, 255, 0.02)' }}>
             <samp style={{ color: 'var(--red)', display: 'block', marginBottom: '8px' }}>[ NEW AGENT PROPOSED: {attrValue} ]</samp>
             <pre style={{ fontSize: 'var(--micro)', color: 'var(--fg-dim)', maxHeight: '150px', overflowY: 'auto', marginBottom: '8px', whiteSpace: 'pre-wrap' }}>{content}</pre>
-            <button className="tab-btn" style={{ background: 'var(--bg-raised)' }} onClick={() => executeCreateAgent(attrValue, content)}>DEPLOY AGENT</button>
+            <button className="tab-btn" style={{ background: 'var(--bg-raised)' }} onClick={run}>DEPLOY AGENT</button>
+            <AutoRunOnMount cardKey={cardKey} ranSet={autoRanKeysRef.current} enabled={autoAccept} run={run} />
           </div>
         );
       }
@@ -1736,7 +1832,7 @@ export default function Home() {
                         {tagFor(msg.role)} {msg.timestamp}{msg.streaming ? ' — STREAMING' : ''}
                       </samp>
                       <div className="msg-body">
-                        {renderMessageContent(msg.streaming ? stripIncompleteTagTail(msg.text) : msg.text)}
+                        {renderMessageContent(msg.streaming ? stripIncompleteTagTail(msg.text) : msg.text, `${msg.timestamp}-${i}`)}
                         {msg.attachments?.map((att, ai) => (
                           <AttachmentView key={`${att.path}-${ai}`} attachment={att} />
                         ))}
@@ -1914,6 +2010,7 @@ export default function Home() {
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <samp style={{ display: 'block', fontSize: 'var(--micro)', color: 'var(--fg-dim)', marginBottom: '2px' }}>
                             {fact.name || 'unnamed'} · {(fact.mem_type || 'project').toUpperCase()}
+                            {fact.project_id === GLOBAL_PROJECT_ID ? ' · GLOBAL' : ''}
                             {fact.description ? ` — ${fact.description}` : ''}
                           </samp>
                           <div className="fact-text">{fact.fact_content}</div>
@@ -1936,6 +2033,16 @@ export default function Home() {
                     {MEM_TYPES.map(t => (
                       <option key={t} value={t}>{t.toUpperCase()}</option>
                     ))}
+                  </select>
+                  <select
+                    className="model-select"
+                    style={{ width: 'auto' }}
+                    value={newFactScope}
+                    onChange={e => setNewFactScope(e.target.value as 'project' | 'global')}
+                    title="GLOBAL facts are visible from every project"
+                  >
+                    <option value="project">THIS PROJECT</option>
+                    <option value="global">GLOBAL</option>
                   </select>
                   <input
                     className="fact-input"

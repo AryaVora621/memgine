@@ -168,3 +168,81 @@ CREATE POLICY "operator connectors" ON public.connectors
 -- ─────────────────────────────────────────────────────────────────────────────
 -- OAuth support for MCP connectors. Applied 2026-07-03 as "connectors_oauth".
 ALTER TABLE public.connectors ADD COLUMN IF NOT EXISTS oauth jsonb;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Global (cross-project) memory scope. A reserved sentinel project row holds
+-- memories visible from every project (operator identity, cross-cutting
+-- preferences), alongside the existing per-project palace. Applied 2026-07-03
+-- as migration "global_memory_scope".
+INSERT INTO public.projects (id, name, path, created_at)
+VALUES ('00000000-0000-0000-0000-000000000000', 'GLOBAL', '', now())
+ON CONFLICT (id) DO NOTHING;
+
+-- match_memories returns project_id too, so callers can label GLOBAL vs
+-- project-local memories in the recalled set, not just the index. Applied
+-- 2026-07-03 as migration "match_memories_return_project_id".
+DROP FUNCTION IF EXISTS public.match_memories(uuid, text, text[], int);
+
+CREATE FUNCTION public.match_memories(
+  p_project uuid,
+  p_query text,
+  p_terms text[] DEFAULT '{}',
+  p_k int DEFAULT 8
+)
+RETURNS TABLE (
+  id uuid,
+  project_id uuid,
+  room_name text,
+  name text,
+  description text,
+  mem_type text,
+  fact_content text,
+  score double precision
+)
+LANGUAGE sql
+STABLE
+SET search_path = public, extensions
+AS $$
+  SELECT
+    m.id, m.project_id, m.room_name, m.name, m.description, m.mem_type, m.fact_content,
+    (
+      CASE WHEN m.embedding IS NULL THEN 0.0
+           ELSE 1.0 - (m.embedding <=> p_query::extensions.vector(384)) END
+      + LEAST(0.24, 0.06 * (
+          SELECT count(*)::float FROM unnest(p_terms) t
+          WHERE m.name ILIKE '%' || t || '%'
+             OR m.description ILIKE '%' || t || '%'
+             OR m.fact_content ILIKE '%' || t || '%'
+        ))
+      + 0.1 * exp(-extract(epoch FROM (now() - m.created_at)) / (60.0 * 86400.0))
+    ) AS score
+  FROM public.project_memories m
+  WHERE m.project_id = p_project OR m.project_id = '00000000-0000-0000-0000-000000000000'
+  ORDER BY score DESC
+  LIMIT p_k;
+$$;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Operator settings (single-row global config, e.g. the auto-accept toggle)
+-- and per-chat sandbox tracking for RUN_CODE. Applied 2026-07-04 as migration
+-- "operator_settings_and_sandbox_columns".
+CREATE TABLE IF NOT EXISTS public.operator_settings (
+  id boolean PRIMARY KEY DEFAULT true CONSTRAINT operator_settings_singleton CHECK (id),
+  auto_accept boolean NOT NULL DEFAULT false,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+INSERT INTO public.operator_settings (id, auto_accept) VALUES (true, false)
+ON CONFLICT (id) DO NOTHING;
+
+ALTER TABLE public.operator_settings ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "operator_settings_operator_all" ON public.operator_settings;
+CREATE POLICY "operator_settings_operator_all" ON public.operator_settings
+  FOR ALL
+  USING (private.is_operator())
+  WITH CHECK (private.is_operator());
+
+ALTER TABLE public.chats
+  ADD COLUMN IF NOT EXISTS sandbox_id text,
+  ADD COLUMN IF NOT EXISTS sandbox_last_used_at timestamptz;

@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.110.0",
+    "@vercel/sandbox": "^2.4.0",
     "framer-motion": "^12.42.2",
     "lucide-react": "^1.22.0",
     "next": "16.2.9",

@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 import { supabase } from '@/lib/supabaseClient';
+import { GLOBAL_PROJECT_ID } from '@/lib/tags';
 
 const ForceGraph2D = dynamic(() => import('react-force-graph-2d'), { ssr: false });
 
@@ -54,13 +55,14 @@ export default function GraphView({ projectId, refreshKey }: GraphViewProps) {
     if (!projectId || !supabase) return;
     supabase
       .from('project_memories')
-      .select('id, room_name, fact_content, name, description, mem_type')
-      .eq('project_id', projectId)
+      .select('id, project_id, room_name, fact_content, name, description, mem_type')
+      .in('project_id', [projectId, GLOBAL_PROJECT_ID])
       .order('created_at', { ascending: true })
       .then(({ data }) => {
         if (!data) return;
         const rows = data as {
           id: string;
+          project_id: string;
           room_name: string | null;
           fact_content: string;
           name: string | null;
@@ -90,9 +92,10 @@ export default function GraphView({ projectId, refreshKey }: GraphViewProps) {
             });
           }
           const slug = m.name || m.fact_content.substring(0, 24);
+          const isGlobal = m.project_id === GLOBAL_PROJECT_ID;
           nodes.push({
             id: m.id,
-            label: slug.substring(0, 28),
+            label: (isGlobal ? '✦ ' : '') + slug.substring(0, 28),
             kind: 'fact',
             memType: m.mem_type || 'project',
             room,

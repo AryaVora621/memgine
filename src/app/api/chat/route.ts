@@ -5,6 +5,7 @@ import { ATTACHMENTS_BUCKET, type Attachment } from '@/lib/attachments';
 import { authedClient, getSupabaseEnv } from '@/lib/serverSupabase';
 import { listConnectorTools, type Connector, type McpTool } from '@/lib/mcp';
 import { resolveConnectorAuth } from '@/lib/mcpOauth';
+import { GLOBAL_PROJECT_ID } from '@/lib/tags';
 
 // The server is the source of truth: it fetches personas, memories, and
 // history from Supabase itself (scoped to the caller's JWT so RLS applies),
@@ -23,6 +24,7 @@ interface MemoryEntry {
   name?: string | null;
   description?: string | null;
   mem_type?: string | null;
+  project_id?: string | null;
 }
 
 interface HistoryRow {
@@ -82,12 +84,13 @@ function keywordTerms(text: string): string[] {
 function buildMemoriesContext(all: MemoryEntry[], recalled: MemoryEntry[]): string {
   if (all.length === 0) return '';
   let ctx = `\n\n<MEMORY_PALACE_CONTEXT>\n`;
-  ctx += `Long-term memory. Types: user (who the operator is), feedback (guidance on how to work), project (ongoing work and constraints), reference (external pointers). [[name]] links point at other memories in this palace.\n`;
+  ctx += `Long-term memory. Types: user (who the operator is), feedback (guidance on how to work), project (ongoing work and constraints), reference (external pointers). Scope: GLOBAL memories are visible in every project; the rest are local to this one. [[name]] links point at other memories in this palace.\n`;
 
   ctx += `\n[INDEX]\n`;
   for (const pm of all) {
     const hook = pm.description || pm.fact_content.split('\n')[0];
-    ctx += `- ${pm.name || 'unnamed'} (${pm.mem_type || 'project'}, ${(pm.room_name || 'GENERAL').toUpperCase()}) — ${hook}\n`;
+    const scope = pm.project_id === GLOBAL_PROJECT_ID ? ', GLOBAL' : '';
+    ctx += `- ${pm.name || 'unnamed'} (${pm.mem_type || 'project'}, ${(pm.room_name || 'GENERAL').toUpperCase()}${scope}) — ${hook}\n`;
   }
 
   const bodies = recalled.length > 0 ? recalled : all;
@@ -98,7 +101,7 @@ function buildMemoriesContext(all: MemoryEntry[], recalled: MemoryEntry[]): stri
   for (const pm of bodies) {
     ctx += `---\nname: ${pm.name || 'unnamed'}\nroom: ${(pm.room_name || 'GENERAL').toUpperCase()}\n`;
     if (pm.description) ctx += `description: ${pm.description}\n`;
-    ctx += `type: ${pm.mem_type || 'project'}\n---\n${pm.fact_content}\n`;
+    ctx += `type: ${pm.mem_type || 'project'}\nscope: ${pm.project_id === GLOBAL_PROJECT_ID ? 'global' : 'project'}\n---\n${pm.fact_content}\n`;
   }
   ctx += `</MEMORY_PALACE_CONTEXT>`;
   return ctx;
@@ -218,10 +221,13 @@ export async function POST(req: Request) {
       personas = personaRows || [];
 
       // MemPalace: full index always; hybrid recall for bodies once it grows.
+      // Pulls this project's memories plus the GLOBAL sentinel project's, so
+      // operator-wide facts (identity, cross-cutting preferences) travel into
+      // every project alongside the project-local palace.
       const { data: memRows } = await db
         .from('project_memories')
-        .select('room_name, name, description, mem_type, fact_content')
-        .eq('project_id', projectId)
+        .select('project_id, room_name, name, description, mem_type, fact_content')
+        .in('project_id', [projectId, GLOBAL_PROJECT_ID])
         .order('created_at', { ascending: true });
       allMemories = memRows || [];
 
@@ -389,6 +395,27 @@ To define a new specialized sub-agent the operator can deploy, output:
 <CREATE_AGENT name="[AGENT_NAME]">
 [Agent description and rules]
 </CREATE_AGENT>
+
+To run real code (python/node/bash — including curl against external APIs) in a
+sandboxed VM scoped to this chat, output:
+<RUN_CODE runtime="[python|node|bash]">
+[The script. stdout/stderr come back as a system message on your next turn.]
+</RUN_CODE>
+The sandbox persists across runs within this chat (installed packages, written
+files survive). Add reset="true" on the tag to force a fresh sandbox instead of
+reusing the existing one. The sandbox is also recycled automatically after 30
+minutes of inactivity or 2 hours of total lifetime — you don't need to manage
+that yourself, just reset="true" when you want a clean slate on purpose (e.g.
+after a broken dependency install).
+
+Self-improvement: if the operator has a "github" connector configured and you
+notice a concrete bug or improvement in Memgine's own source, you may propose
+it as a real pull request using your github tools (USE_TOOL), same as any
+other connector call — each individual tool call still renders its own
+approval card. Always work on a new branch and open a PR; never push directly
+to main. Do not go looking for things to change unprompted — only propose
+edits when the operator asked you to look at the codebase or you're already
+working a task that surfaces a clear fix.
 
 The operator can switch the underlying AI model at any time; your persona files and
 memory persist across model swaps. Never invent project facts: the Memory Palace and
