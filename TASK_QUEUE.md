@@ -20,7 +20,16 @@
 - USER: consider rotating the operator password (it was shared in a chat session).
 
 ## In-Progress
-(none)
+- Verify the /api/mcp/key auth-header fix (SettingsModal.tsx regenerateMcpKey)
+  live on production, memgine.vercel.app, not just localhost:3060 — confirmed
+  locally 2026-07-04 (see CHECKPOINT_LAST.md) but not yet re-checked post-deploy.
+- Local-machine agent capabilities (design stage, not yet built): let the agent
+  know explicitly whether the current session is running locally vs on the
+  deployed site, and — local-only — give it terminal command access (create
+  dir, browse filesystem, scan serial ports, etc.) via an approval-gated tool,
+  same pattern as RUN_CODE/USE_TOOL. Needs a safety design pass before writing
+  code (arbitrary shell exec triggered by an LLM on the operator's real
+  machine) — see CHECKPOINT_LAST.md for open questions.
 
 ## Done (2026-07-02)
 - Production live at memgine.vercel.app; auto-deploy from main verified working.

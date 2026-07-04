@@ -162,6 +162,11 @@ export async function POST(req: Request) {
       agentPersonas,
       attachments = [],
       webSearch = false,
+      // Client-computed (window.location.hostname) — true only when the
+      // operator is running the app via `npm run dev` on their own machine,
+      // never on the deployed site. Purely informational for the system
+      // prompt; RUN_LOCAL's real gate is server-side in /api/local/exec.
+      isLocal = false,
       // Set by autoContinue (page.tsx): the model reacting to a USE_TOOL/
       // RUN_CODE result it hasn't seen yet, not a real operator turn. No
       // user message is persisted; formattedHistory gets a synthetic,
@@ -415,6 +420,27 @@ reusing the existing one. The sandbox is also recycled automatically after 30
 minutes of inactivity or 2 hours of total lifetime — you don't need to manage
 that yourself, just reset="true" when you want a clean slate on purpose (e.g.
 after a broken dependency install).
+
+${isLocal ? `You are currently running LOCALLY on the operator's own machine (they are
+using \`npm run dev\`, not the deployed site). This means RUN_LOCAL is
+available: to run a real terminal command directly on the operator's machine
+(create a directory, browse the filesystem, list serial/USB devices for a
+hardware project, run a build script, anything a shell can do), output:
+<RUN_LOCAL cwd="[optional working directory, defaults to the operator's home dir]">
+[a single shell command. stdout/stderr come back as a system message on your next turn.]
+</RUN_LOCAL>
+This is NOT a disposable sandbox — it is the operator's real machine with full
+filesystem access, so treat every command as if you were typing it yourself at
+their terminal. Commands matching common destructive patterns (rm -rf, sudo,
+disk/format operations, force-pushing, piping a remote script into a shell,
+etc.) always require the operator to click confirm themselves, even if their
+auto-accept setting is on — you cannot bypass this. Prefer the narrowest
+command that accomplishes the goal, and say what a command will do before
+running it if its effect isn't obvious from the command itself.` : `You are currently running on the DEPLOYED production site, not the
+operator's local machine. RUN_LOCAL (real terminal access to the operator's
+computer) is NOT available in this session — do not emit a RUN_LOCAL tag
+here; it will be ignored. If the operator needs local terminal/filesystem
+access, tell them to run this app locally via \`npm run dev\` instead.`}
 
 Self-improvement: if the operator has a "github" connector configured and you
 notice a concrete bug or improvement in Memgine's own source, you may propose

@@ -12,13 +12,49 @@ export const MEM_TYPES: MemType[] = ['user', 'feedback', 'project', 'reference']
 // memories visible from every project, alongside each project's own palace.
 export const GLOBAL_PROJECT_ID = '00000000-0000-0000-0000-000000000000';
 
-export const AGENT_TAGS = ['PROPOSE_EDIT', 'ADD_FACT', 'CREATE_AGENT', 'ASK_USER', 'USE_TOOL', 'RUN_CODE'] as const;
+export const AGENT_TAGS = ['PROPOSE_EDIT', 'ADD_FACT', 'CREATE_AGENT', 'ASK_USER', 'USE_TOOL', 'RUN_CODE', 'RUN_LOCAL'] as const;
 export type AgentTag = (typeof AGENT_TAGS)[number];
 
 // Approval cards that a global auto-accept toggle may execute without a click.
 // ASK_USER is deliberately excluded: it's a question for the operator, not a
-// proposed action, so it always requires a manual answer.
-export const AUTO_ACCEPTABLE_TAGS: AgentTag[] = ['PROPOSE_EDIT', 'ADD_FACT', 'CREATE_AGENT', 'USE_TOOL', 'RUN_CODE'];
+// proposed action, so it always requires a manual answer. RUN_LOCAL is
+// included here for commands that pass isDangerousLocalCommand() == false;
+// dangerous ones always require a manual click regardless of this toggle —
+// see isDangerousLocalCommand and its usage in page.tsx.
+export const AUTO_ACCEPTABLE_TAGS: AgentTag[] = ['PROPOSE_EDIT', 'ADD_FACT', 'CREATE_AGENT', 'USE_TOOL', 'RUN_CODE', 'RUN_LOCAL'];
+
+// Commands a RUN_LOCAL card must never auto-execute, even with global
+// auto-accept on — real filesystem/system-state destruction on the
+// operator's actual machine, not a disposable cloud sandbox. This is a
+// best-effort denylist, not a sandbox: it catches the common irreversible
+// patterns the operator called out (rm -rf and friends), not every possible
+// dangerous shell invocation.
+const DANGEROUS_COMMAND_PATTERNS: RegExp[] = [
+  /\brm\s+(-\w*r\w*f\w*|-\w*f\w*r\w*)\b/i,          // rm -rf / -fr (any flag order)
+  /\brm\s+--recursive\b[^\n]*--force\b/i,            // rm --recursive ... --force
+  /\brm\s+--force\b[^\n]*--recursive\b/i,
+  /\bsudo\b/i,
+  /\bsu\s+-/i,
+  /\bmkfs\b/i,
+  /\bdd\s+if=/i,
+  /\bdiskutil\s+(erase|reformat|partitiondisk)/i,
+  /\bchmod\s+-R\b/i,
+  /\bchown\s+-R\b/i,
+  />\s*\/dev\/(disk|r?sd)/i,
+  /\b(shutdown|reboot|halt|poweroff)\b/i,
+  /\bkill\s+-9\s+1\b/i,
+  /\bpkill\s+-9\b/i,
+  /\bgit\s+push\b[^\n]*(--force|-f)\b/i,
+  /\bgit\s+reset\s+--hard\b/i,
+  /\bgit\s+clean\s+-\w*f/i,
+  /\bcurl\b[^\n|]*\|\s*(sh|bash|zsh)\b/i,             // pipe remote script to a shell
+  /\bwget\b[^\n|]*\|\s*(sh|bash|zsh)\b/i,
+  /:\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:/,          // fork bomb
+];
+
+export function isDangerousLocalCommand(command: string): boolean {
+  return DANGEROUS_COMMAND_PATTERNS.some(re => re.test(command));
+}
 
 // A voluntary end-of-loop marker, not an approval card: after a tool/sandbox
 // result auto-continues the conversation (see page.tsx autoContinue), the
@@ -70,7 +106,7 @@ export interface ParsedTag {
  * names) are left in place and render as plain text rather than throwing.
  */
 export function extractTags(text: string): ParsedTag[] {
-  const combined = /<(PROPOSE_EDIT|ADD_FACT|CREATE_AGENT|ASK_USER|USE_TOOL|RUN_CODE)((?:\s+[a-zA-Z_]+="[^"]*")*)\s*>([\s\S]*?)<\/\1>/g;
+  const combined = /<(PROPOSE_EDIT|ADD_FACT|CREATE_AGENT|ASK_USER|USE_TOOL|RUN_CODE|RUN_LOCAL)((?:\s+[a-zA-Z_]+="[^"]*")*)\s*>([\s\S]*?)<\/\1>/g;
   const out: ParsedTag[] = [];
   let m;
   while ((m = combined.exec(text)) !== null) {
@@ -112,7 +148,7 @@ export function parseAskUserContent(content: string): { question: string; option
  * source never flashes in the UI; the card appears once the close tag lands.
  */
 export function stripIncompleteTagTail(text: string): string {
-  const opener = /<(PROPOSE_EDIT|ADD_FACT|CREATE_AGENT|ASK_USER|USE_TOOL|RUN_CODE)(?:\s|>|$)/g;
+  const opener = /<(PROPOSE_EDIT|ADD_FACT|CREATE_AGENT|ASK_USER|USE_TOOL|RUN_CODE|RUN_LOCAL)(?:\s|>|$)/g;
   let lastOpen = -1;
   let lastTag = '';
   let m;

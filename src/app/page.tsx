@@ -6,7 +6,7 @@ import SettingsModal from '@/components/SettingsModal';
 import AskUserCard from '@/components/AskUserCard';
 import AutoRunOnMount from '@/components/AutoRunOnMount';
 import AttachmentView from '@/components/AttachmentView';
-import { slugify, isMemType, parseTagAttrs, stripIncompleteTagTail, hasStopTag, stripStopTag, MEM_TYPES, GLOBAL_PROJECT_ID, type MemType } from '@/lib/tags';
+import { slugify, isMemType, parseTagAttrs, stripIncompleteTagTail, hasStopTag, stripStopTag, isDangerousLocalCommand, MEM_TYPES, GLOBAL_PROJECT_ID, type MemType } from '@/lib/tags';
 import { ATTACHMENTS_BUCKET, attachmentKind, safeStorageName, formatBytes, type Attachment } from '@/lib/attachments';
 import { supabase } from '@/lib/supabaseClient';
 import type { Session } from '@supabase/supabase-js';
@@ -891,6 +891,41 @@ export default function Home() {
     await autoContinue(chatId);
   };
 
+  // Approval-gated local terminal execution (RUN_LOCAL cards). Unlike
+  // RUN_CODE, this runs directly on the operator's own machine — only
+  // available when the app is running locally (see isLocal below and the
+  // matching server-side gate in /api/local/exec). `confirmed: true` is
+  // always sent from here because the caller (a manual click, or auto-run
+  // for a command isDangerousLocalCommand() already cleared) is the only
+  // path that reaches this function; the server re-checks independently.
+  const executeRunLocal = async (command: string, cwd: string) => {
+    if (!activeProject || !activeChatId) return;
+    const chatId = activeChatId;
+    setLoading(true);
+    try {
+      const res = await fetch('/api/local/exec', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+        },
+        body: JSON.stringify({ projectId: activeProject.id, chatId, command, cwd, confirmed: true }),
+      });
+      const json = await res.json();
+      addMessage(chatId, {
+        role: 'system',
+        text: json.success
+          ? `[ LOCAL_RESULT ]\n${json.text}`
+          : `[ ERROR ] Local command failed: ${json.error}`,
+        timestamp: ts(),
+      });
+    } catch (e) {
+      addMessage(chatId, { role: 'system', text: `[ FATAL ] Local command failed. (${e instanceof Error ? e.message : 'unknown'})`, timestamp: ts() });
+    }
+    setLoading(false);
+    await autoContinue(chatId);
+  };
+
   // Generation skills: prompt -> /api/generate -> stored media + persisted
   // messages. Video is an async job polled until it completes.
   const runGeneration = async (kind: 'image' | 'audio' | 'video', prompt: string) => {
@@ -1073,6 +1108,7 @@ export default function Home() {
       agentPersonas,
       attachments,
       webSearch,
+      isLocal,
       // The server fetches history/memories/personas from Supabase itself;
       // these ride along only for Supabase-less local setups.
       ...(supabase ? {} : { history: currentMessages, projectMemories, projectPersonas }),
@@ -1110,6 +1146,7 @@ export default function Home() {
       agentPersonas,
       attachments: [],
       webSearch,
+      isLocal,
       ...(supabase ? {} : { history: currentMessages, projectMemories, projectPersonas }),
     });
     setLoading(false);
@@ -1459,7 +1496,7 @@ export default function Home() {
     let currentIndex = 0;
     
     // We match PROPOSE_EDIT, ADD_FACT, CREATE_AGENT, ASK_USER, USE_TOOL, RUN_CODE
-    const combinedRegex = /<(PROPOSE_EDIT|ADD_FACT|CREATE_AGENT|ASK_USER|USE_TOOL|RUN_CODE)((?:\s+[a-zA-Z_]+="[^"]*")*)\s*>([\s\S]*?)<\/\1>/g;
+    const combinedRegex = /<(PROPOSE_EDIT|ADD_FACT|CREATE_AGENT|ASK_USER|USE_TOOL|RUN_CODE|RUN_LOCAL)((?:\s+[a-zA-Z_]+="[^"]*")*)\s*>([\s\S]*?)<\/\1>/g;
 
     let match;
     while ((match = combinedRegex.exec(msgText)) !== null) {
@@ -1560,6 +1597,28 @@ export default function Home() {
               RUN IN SANDBOX
             </button>
             <AutoRunOnMount cardKey={cardKey} ranSet={autoRanKeysRef.current} enabled={autoAccept} run={run} />
+          </div>
+        );
+      } else if (tag === 'RUN_LOCAL') {
+        const cwd = attrs.cwd || '';
+        const dangerous = isDangerousLocalCommand(content);
+        const cardKey = `local-${activeChatId}-${msgId}-${match.index}`;
+        const run = () => executeRunLocal(content, cwd);
+        elements.push(
+          <div key={`local-${match.index}`} style={{ border: `1px solid ${dangerous ? 'var(--red)' : 'var(--grid-thick)'}`, padding: '12px', margin: '8px 0', background: 'rgba(255, 255, 255, 0.02)' }}>
+            <samp style={{ color: dangerous ? 'var(--red)' : '#38BDF8', display: 'block', marginBottom: '8px' }}>
+              [ RUN_LOCAL{cwd ? `: ${cwd}` : ''}{dangerous ? ' · DESTRUCTIVE — ALWAYS REQUIRES MANUAL CONFIRM' : ''} ]
+            </samp>
+            <pre style={{ fontSize: 'var(--micro)', color: 'var(--fg-dim)', maxHeight: '200px', overflowY: 'auto', marginBottom: '8px', whiteSpace: 'pre-wrap' }}>{content}</pre>
+            <button
+              className="tab-btn"
+              style={{ background: 'var(--bg-raised)', color: dangerous ? 'var(--red)' : undefined }}
+              disabled={loading}
+              onClick={run}
+            >
+              {dangerous ? 'CONFIRM — RUN ON MY MACHINE' : 'RUN ON MY MACHINE'}
+            </button>
+            <AutoRunOnMount cardKey={cardKey} ranSet={autoRanKeysRef.current} enabled={autoAccept && !dangerous} run={run} />
           </div>
         );
       } else if (tag === 'CREATE_AGENT') {
