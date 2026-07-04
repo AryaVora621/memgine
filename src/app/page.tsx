@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback, useMemo, useSyncExternalStore } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo, useSyncExternalStore } from 'react';
 import GraphView from '@/components/GraphView';
 import SettingsModal from '@/components/SettingsModal';
 import AskUserCard from '@/components/AskUserCard';
@@ -370,6 +370,59 @@ function ts(): string {
   return new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
+function tagFor(role: string): string {
+  if (role === 'user') return '< USER_INPUT >';
+  if (role === 'system') return '< SYSTEM >';
+  return '< AI_RESPONSE >';
+}
+
+interface MessageListProps {
+  messages: Message[];
+  loading: boolean;
+  renderMessageContent: (msgText: string, msgId?: string) => React.ReactNode;
+}
+
+// Memoized so a keystroke in the compose box (which only changes `message`
+// state in the parent) doesn't re-render and re-parse markdown for every
+// message in the chat history — only changes to messages/loading/the
+// (stable) renderMessageContent callback do.
+const MessageList = React.memo(function MessageList({ messages, loading, renderMessageContent }: MessageListProps) {
+  return (
+    <div className="msg-list">
+      {messages.map((msg, i) => (
+        <div key={i} className={`msg-block ${msg.role === 'user' ? 'from-user' : ''}`}>
+          <samp className="msg-tag">
+            {tagFor(msg.role)} {msg.timestamp}{msg.streaming ? ' — STREAMING' : ''}
+          </samp>
+          <div className="msg-body">
+            {renderMessageContent(
+              stripStopTag(msg.streaming ? stripIncompleteTagTail(msg.text) : msg.text),
+              `${msg.timestamp}-${i}`
+            )}
+            {msg.attachments?.map((att, ai) => (
+              <AttachmentView key={`${att.path}-${ai}`} attachment={att} />
+            ))}
+            {msg.streaming && <samp className="loading-text">▋</samp>}
+            {!msg.streaming && hasStopTag(msg.text) && (
+              <samp style={{ display: 'block', marginTop: '6px', fontSize: 'var(--micro)', color: 'var(--fg-dim)' }}>
+                [ STOPPED — awaiting operator input ]
+              </samp>
+            )}
+          </div>
+        </div>
+      ))}
+      {loading && !messages.some(m => m.streaming) && (
+        <div className="msg-block">
+          <samp className="msg-tag">{"< PROCESSING >"} {ts()}</samp>
+          <div className="msg-body">
+            <samp className="loading-text">{">>> AWAITING RESPONSE..."}</samp>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+});
+
 
 export default function Home() {
   const [tab, setTab] = useState<'chat' | 'graph' | 'palace' | 'persona'>('chat');
@@ -394,14 +447,12 @@ export default function Home() {
   // Auto-continue: after a USE_TOOL/RUN_CODE result lands, the model hasn't
   // seen it yet and previously needed the operator to type "continue" to
   // react to it. abortControllerRef backs the manual STOP button (cancels
-  // whichever turn -- user-sent or auto-continued -- is in flight);
-  // autoContinueCountRef/MAX_AUTO_CONTINUES cap runaway tool-use loops when
-  // the model doesn't emit <STOP/> on its own; stopRequestedRef is a hard
-  // kill switch the operator sets, checked before any further auto-continue.
+  // whichever turn -- user-sent or auto-continued -- is in flight); no turn
+  // cap -- the loop runs until the model emits <STOP/> or the operator hits
+  // STOP, which sets stopRequestedRef and is checked before every continue.
   const abortControllerRef = useRef<AbortController | null>(null);
   const autoContinueCountRef = useRef(0);
   const stopRequestedRef = useRef(false);
-  const MAX_AUTO_CONTINUES = 6;
 
   // Authentication — the whole app is gated behind a Supabase session
   const [session, setSession] = useState<Session | null>(null);
@@ -463,9 +514,27 @@ export default function Home() {
   // waiting for a click (ASK_USER is exempt — it's a question, not an action).
   const [autoAccept, setAutoAccept] = useState(false);
   const autoRanKeysRef = useRef<Set<string>>(new Set());
+  // Holds the latest values renderMessageContent needs, so that callback can
+  // have a permanently stable identity (see its definition below).
+  const messageRenderCtxRef = useRef<{
+    activeChatId: string | null;
+    executeEditSelf: (filename: string, content: string) => void | Promise<void>;
+    executeAddFact: (...args: any[]) => void | Promise<void>;
+    autoAccept: boolean;
+    loading: boolean;
+    executeUseTool: (connector: string, tool: string, argsJson: string) => void | Promise<void>;
+    executeRunCode: (runtime: string, code: string, reset: boolean) => void | Promise<void>;
+    executeRunLocal: (command: string, cwd: string) => void | Promise<void>;
+    executeCreateAgent: (name: string, content: string) => void | Promise<void>;
+    sendChatMessage: (userMsgText: string) => void | Promise<void>;
+  }>({} as any);
 
-  // Messages keyed by chat id
+  // Messages keyed by chat id. Capped to a handful of most-recently-viewed
+  // chats — history always reloads from Supabase on switch, so this is a
+  // cache, not a source of truth, and shouldn't grow for the life of the tab.
   const [messagesByChat, setMessagesByChat] = useState<Record<string, Message[]>>({});
+  const chatLruRef = useRef<string[]>([]);
+  const MAX_CACHED_CHATS = 4;
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -641,13 +710,18 @@ export default function Home() {
             timestamp: m.timestamp,
             attachments: (m.metadata as { attachments?: Attachment[] } | null)?.attachments,
           }));
-          setMessagesByChat(prev => ({
-            ...prev,
-            [activeChatId]: [
+          chatLruRef.current = [activeChatId, ...chatLruRef.current.filter(id => id !== activeChatId)];
+          const evicted = chatLruRef.current.slice(MAX_CACHED_CHATS);
+          chatLruRef.current = chatLruRef.current.slice(0, MAX_CACHED_CHATS);
+          setMessagesByChat(prev => {
+            const next = { ...prev };
+            for (const id of evicted) delete next[id];
+            next[activeChatId] = [
               { role: 'system', text: `[ SYS_INIT ] CONTEXT ENGINE LOADED FOR PROJECT: ${activeProjectName}`, timestamp: ts() },
               ...loadedMsgs,
-            ],
-          }));
+            ];
+            return next;
+          });
         }
       });
   }, [activeChatId, activeProjectName]);
@@ -1015,6 +1089,20 @@ export default function Home() {
       let acc = '';
       let streamError: string | null = null;
 
+      // Every SSE delta is one token; flushing to React state per-token makes
+      // the whole (unvirtualized) message list re-render and re-parse markdown
+      // on every token — O(response length) renders instead of O(1). Batch to
+      // one flush per animation frame instead.
+      let rafPending = false;
+      const flush = () => {
+        if (rafPending) return;
+        rafPending = true;
+        requestAnimationFrame(() => {
+          rafPending = false;
+          updateStreamingMessage(chatId, acc, true);
+        });
+      };
+
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -1028,7 +1116,7 @@ export default function Home() {
             const evt = JSON.parse(trimmed.slice(5).trim());
             if (typeof evt.delta === 'string') {
               acc += evt.delta;
-              updateStreamingMessage(chatId, acc, true);
+              flush();
             }
             if (evt.error) streamError = String(evt.error);
           } catch {}
@@ -1119,18 +1207,10 @@ export default function Home() {
 
   // Fires after a USE_TOOL/RUN_CODE result is appended to history, so the
   // model can react to it without the operator having to type "continue".
-  // Bounded by MAX_AUTO_CONTINUES and the manual STOP button (stopRequestedRef);
-  // the model can end the loop itself early by emitting <STOP/>.
+  // Only bounded by the manual STOP button (stopRequestedRef) or the model
+  // ending the loop itself by emitting <STOP/>.
   const autoContinue = async (chatId: string) => {
     if (stopRequestedRef.current) return;
-    if (autoContinueCountRef.current >= MAX_AUTO_CONTINUES) {
-      addMessage(chatId, {
-        role: 'system',
-        text: `[ AUTO-CONTINUE LIMIT REACHED (${MAX_AUTO_CONTINUES}) ] Reply to continue manually, or ask the agent to <STOP/> sooner next time.`,
-        timestamp: ts(),
-      });
-      return;
-    }
     if (!activeProject) return;
     autoContinueCountRef.current += 1;
     setLoading(true);
@@ -1491,7 +1571,21 @@ export default function Home() {
     } catch {}
   };
 
-  const renderMessageContent = (msgText: string, msgId: string = '') => {
+  // renderMessageContent is wrapped in useCallback([]) below so its identity
+  // never changes; it reads changing values through this ref instead of
+  // closing over them directly, so typing in the compose box (which only
+  // changes `message` state) doesn't force the whole message list to
+  // re-render and re-parse markdown for every message in the chat.
+  messageRenderCtxRef.current = {
+    activeChatId, executeEditSelf, executeAddFact, autoAccept, loading,
+    executeUseTool, executeRunCode, executeRunLocal, executeCreateAgent, sendChatMessage,
+  };
+
+  const renderMessageContent = useCallback((msgText: string, msgId: string = '') => {
+    const {
+      activeChatId, executeEditSelf, executeAddFact, autoAccept, loading,
+      executeUseTool, executeRunCode, executeRunLocal, executeCreateAgent, sendChatMessage,
+    } = messageRenderCtxRef.current;
     const elements: React.ReactNode[] = [];
     let currentIndex = 0;
     
@@ -1647,13 +1741,7 @@ export default function Home() {
     }
     
     return <>{elements}</>;
-  };
-
-  const tagFor = (role: string) => {
-    if (role === 'user') return '< USER_INPUT >';
-    if (role === 'system') return '< SYSTEM >';
-    return '< AI_RESPONSE >';
-  };
+  }, []);
 
 
   const roomFacts = projectMemories.filter(pm => pm.room_name === activeRoom);
@@ -1994,38 +2082,7 @@ export default function Home() {
           ) : tab === 'chat' ? (
             <>
               <div className="chat-scroll" ref={scrollRef}>
-                <div className="msg-list">
-                  {currentMessages.map((msg, i) => (
-                    <div key={i} className={`msg-block ${msg.role === 'user' ? 'from-user' : ''}`}>
-                      <samp className="msg-tag">
-                        {tagFor(msg.role)} {msg.timestamp}{msg.streaming ? ' — STREAMING' : ''}
-                      </samp>
-                      <div className="msg-body">
-                        {renderMessageContent(
-                          stripStopTag(msg.streaming ? stripIncompleteTagTail(msg.text) : msg.text),
-                          `${msg.timestamp}-${i}`
-                        )}
-                        {msg.attachments?.map((att, ai) => (
-                          <AttachmentView key={`${att.path}-${ai}`} attachment={att} />
-                        ))}
-                        {msg.streaming && <samp className="loading-text">▋</samp>}
-                        {!msg.streaming && hasStopTag(msg.text) && (
-                          <samp style={{ display: 'block', marginTop: '6px', fontSize: 'var(--micro)', color: 'var(--fg-dim)' }}>
-                            [ STOPPED — awaiting operator input ]
-                          </samp>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                  {loading && !currentMessages.some(m => m.streaming) && (
-                    <div className="msg-block">
-                      <samp className="msg-tag">{"< PROCESSING >"} {ts()}</samp>
-                      <div className="msg-body">
-                        <samp className="loading-text">{">>> AWAITING RESPONSE..."}</samp>
-                      </div>
-                    </div>
-                  )}
-                </div>
+                <MessageList messages={currentMessages} loading={loading} renderMessageContent={renderMessageContent} />
               </div>
 
               <hr />
