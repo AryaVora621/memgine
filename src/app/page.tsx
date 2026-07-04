@@ -1913,6 +1913,14 @@ export default function Home() {
               <button className={`tab-btn ${tab === 'persona' ? 'active' : ''}`} onClick={() => setTab('persona')}>
                 [ AGENT_WORK ]
               </button>
+              <button
+                className="tab-btn"
+                onClick={toggleAutoAccept}
+                title="Toggle whether approval cards (edits, facts, tools, sandbox runs) execute automatically"
+                style={{ color: autoAccept ? 'var(--green)' : 'var(--fg-dim)' }}
+              >
+                [ AUTO-ACCEPT: {autoAccept ? 'ON' : 'OFF'} ]
+              </button>
             </div>
           </header>
 
