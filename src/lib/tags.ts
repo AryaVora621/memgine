@@ -20,6 +20,20 @@ export type AgentTag = (typeof AGENT_TAGS)[number];
 // proposed action, so it always requires a manual answer.
 export const AUTO_ACCEPTABLE_TAGS: AgentTag[] = ['PROPOSE_EDIT', 'ADD_FACT', 'CREATE_AGENT', 'USE_TOOL', 'RUN_CODE'];
 
+// A voluntary end-of-loop marker, not an approval card: after a tool/sandbox
+// result auto-continues the conversation (see page.tsx autoContinue), the
+// model emits <STOP/> to say "nothing more to do without new operator input"
+// instead of drifting until the auto-continue cap kicks in.
+const STOP_TAG_RE = /<STOP\s*\/?>(?:\s*<\/STOP>)?/i;
+
+export function hasStopTag(text: string): boolean {
+  return STOP_TAG_RE.test(text);
+}
+
+export function stripStopTag(text: string): string {
+  return text.replace(STOP_TAG_RE, '').trimEnd();
+}
+
 export function isMemType(value: string): value is MemType {
   return (MEM_TYPES as string[]).includes(value);
 }

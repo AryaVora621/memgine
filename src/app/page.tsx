@@ -6,7 +6,7 @@ import SettingsModal from '@/components/SettingsModal';
 import AskUserCard from '@/components/AskUserCard';
 import AutoRunOnMount from '@/components/AutoRunOnMount';
 import AttachmentView from '@/components/AttachmentView';
-import { slugify, isMemType, parseTagAttrs, stripIncompleteTagTail, MEM_TYPES, GLOBAL_PROJECT_ID, type MemType } from '@/lib/tags';
+import { slugify, isMemType, parseTagAttrs, stripIncompleteTagTail, hasStopTag, stripStopTag, MEM_TYPES, GLOBAL_PROJECT_ID, type MemType } from '@/lib/tags';
 import { ATTACHMENTS_BUCKET, attachmentKind, safeStorageName, formatBytes, type Attachment } from '@/lib/attachments';
 import { supabase } from '@/lib/supabaseClient';
 import type { Session } from '@supabase/supabase-js';
@@ -391,6 +391,18 @@ export default function Home() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [graphRefresh, setGraphRefresh] = useState(0);
 
+  // Auto-continue: after a USE_TOOL/RUN_CODE result lands, the model hasn't
+  // seen it yet and previously needed the operator to type "continue" to
+  // react to it. abortControllerRef backs the manual STOP button (cancels
+  // whichever turn -- user-sent or auto-continued -- is in flight);
+  // autoContinueCountRef/MAX_AUTO_CONTINUES cap runaway tool-use loops when
+  // the model doesn't emit <STOP/> on its own; stopRequestedRef is a hard
+  // kill switch the operator sets, checked before any further auto-continue.
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const autoContinueCountRef = useRef(0);
+  const stopRequestedRef = useRef(false);
+  const MAX_AUTO_CONTINUES = 6;
+
   // Authentication — the whole app is gated behind a Supabase session
   const [session, setSession] = useState<Session | null>(null);
   // Ready immediately when Supabase isn't configured (login screen shows the config error)
@@ -408,6 +420,15 @@ export default function Home() {
 
   const [chats, setChats] = useState<Chat[]>([]);
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
+
+  // Mirrors of the current selection for use inside refetch .then() closures,
+  // which see whatever activeProjectId/activeChatId was in scope when the
+  // effect fired -- not necessarily what's selected by the time the response
+  // lands. Without these, a refetch triggered by e.g. a Supabase auth token
+  // refresh (fires periodically, unrelated to user action) would clobber
+  // whatever project/chat the operator is actively viewing back to index 0.
+  const activeProjectIdRef = useRef<string | null>(null);
+  const activeChatIdRef = useRef<string | null>(null);
 
   // MemPalace structured facts
   const [projectMemories, setProjectMemories] = useState<ProjectMemory[]>([]);
@@ -450,6 +471,13 @@ export default function Home() {
 
   const activeProject = activeProjectIdx >= 0 ? projects[activeProjectIdx] : null;
   const activeProjectId = activeProject?.id;
+
+  useEffect(() => {
+    activeProjectIdRef.current = activeProjectId ?? null;
+  }, [activeProjectId]);
+  useEffect(() => {
+    activeChatIdRef.current = activeChatId;
+  }, [activeChatId]);
   const activeProjectName = activeProject?.name ?? '';
   const currentMessages = useMemo(
     () => (activeChatId ? messagesByChat[activeChatId] || [] : []),
@@ -544,7 +572,10 @@ export default function Home() {
       .then(({ data }) => {
         if (data && data.length > 0) {
           setProjects(data);
-          setActiveProjectIdx(0);
+          const keepIdx = activeProjectIdRef.current
+            ? data.findIndex(p => p.id === activeProjectIdRef.current)
+            : -1;
+          setActiveProjectIdx(keepIdx >= 0 ? keepIdx : 0);
         } else {
           setProjects([]);
           setActiveProjectIdx(-1);
@@ -583,7 +614,10 @@ export default function Home() {
       .then(({ data }) => {
         if (data && data.length > 0) {
           setChats(data);
-          setActiveChatId(data[0].id);
+          const keepId = activeChatIdRef.current && data.some(c => c.id === activeChatIdRef.current)
+            ? activeChatIdRef.current
+            : data[0].id;
+          setActiveChatId(keepId);
         } else {
           setChats([]);
           setActiveChatId(null);
@@ -798,6 +832,7 @@ export default function Home() {
         args = JSON.parse(argsJson);
       } catch {
         addMessage(chatId, { role: 'system', text: `[ ERROR ] Tool args are not valid JSON: ${argsJson.slice(0, 120)}`, timestamp: ts() });
+        await autoContinue(chatId);
         return;
       }
     }
@@ -823,6 +858,7 @@ export default function Home() {
       addMessage(chatId, { role: 'system', text: `[ FATAL ] Tool call failed. (${e instanceof Error ? e.message : 'unknown'})`, timestamp: ts() });
     }
     setLoading(false);
+    await autoContinue(chatId);
   };
 
   // Approval-gated sandbox execution (RUN_CODE cards). Runs in a persistent
@@ -852,6 +888,7 @@ export default function Home() {
       addMessage(chatId, { role: 'system', text: `[ FATAL ] Sandbox run failed. (${e instanceof Error ? e.message : 'unknown'})`, timestamp: ts() });
     }
     setLoading(false);
+    await autoContinue(chatId);
   };
 
   // Generation skills: prompt -> /api/generate -> stored media + persisted
@@ -905,30 +942,16 @@ export default function Home() {
     setLoading(false);
   };
 
-  const sendChatMessage = async (userMsgText: string) => {
-    if (!userMsgText.trim() || !activeProject || !activeChatId || loading) return;
-    const chatId = activeChatId;
-    const attachments = pendingAttachments;
-    setPendingAttachments([]);
-
-    addMessage(chatId, {
-      role: 'user',
-      text: userMsgText,
-      timestamp: ts(),
-      attachments: attachments.length > 0 ? attachments : undefined,
-    });
-    setLoading(true);
-
-    // Resolve specific selected Agent profile configuration
-    const selectedAgent = projectAgents.find(a => a.id === selectedAgentId) || PREDEFINED_AGENTS.find(a => a.id === selectedAgentId);
-    const agentDetails = selectedAgent ? {
-      identity_md: selectedAgent.identity_md,
-      soul_md: selectedAgent.soul_md,
-      agents_md: selectedAgent.agents_md
-    } : null;
-
-    const finalModel = model === 'custom' ? customModel.trim() : model;
-
+  // Shared by sendChatMessage (a real operator turn) and autoContinue (the
+  // model reacting to a tool/sandbox result it hasn't seen yet). Streams the
+  // SSE response into a placeholder message and returns the final text, or
+  // null if the request was aborted (manual STOP) or failed outright.
+  const streamChatTurn = async (
+    chatId: string,
+    body: Record<string, unknown>
+  ): Promise<string | null> => {
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
@@ -936,24 +959,8 @@ export default function Home() {
           'Content-Type': 'application/json',
           ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
         },
-        body: JSON.stringify({
-          projectId: activeProject.id,
-          projectName: activeProject.name,
-          chatId,
-          message: userMsgText,
-          model: finalModel,
-          agentName: selectedAgent ? selectedAgent.name : 'GENERAL_HELPER',
-          agentPersonas: agentDetails,
-          attachments,
-          webSearch,
-          // The server fetches history/memories/personas from Supabase itself;
-          // these ride along only for Supabase-less local setups.
-          ...(supabase ? {} : {
-            history: currentMessages,
-            projectMemories,
-            projectPersonas,
-          }),
-        }),
+        body: JSON.stringify(body),
+        signal: controller.signal,
       });
 
       if (!res.ok || !res.body) {
@@ -963,11 +970,9 @@ export default function Home() {
           errText = data.error || errText;
         } catch {}
         addMessage(chatId, { role: 'system', text: `[ ERROR ] ${errText}`, timestamp: ts() });
-        setLoading(false);
-        return;
+        return null;
       }
 
-      // Consume the SSE stream into a live placeholder message.
       addMessage(chatId, { role: 'assistant', text: '', timestamp: ts(), streaming: true });
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
@@ -1001,24 +1006,121 @@ export default function Home() {
         if (streamError) {
           addMessage(chatId, { role: 'system', text: `[ ERROR ] ${streamError}`, timestamp: ts() });
         }
-      } else {
-        removeStreamingPlaceholder(chatId);
-        addMessage(chatId, {
-          role: 'system',
-          text: `[ ERROR ] ${streamError || 'Model returned an empty response. Retry or switch models.'}`,
-          timestamp: ts(),
-        });
+        return acc;
       }
+      removeStreamingPlaceholder(chatId);
+      addMessage(chatId, {
+        role: 'system',
+        text: `[ ERROR ] ${streamError || 'Model returned an empty response. Retry or switch models.'}`,
+        timestamp: ts(),
+      });
+      return null;
     } catch (e) {
       removeStreamingPlaceholder(chatId);
+      if (e instanceof Error && e.name === 'AbortError') {
+        addMessage(chatId, { role: 'system', text: '[ STOPPED BY OPERATOR ]', timestamp: ts() });
+        return null;
+      }
       addMessage(chatId, {
         role: 'system',
         text: `[ FATAL ] Failed to reach context engine. (${e instanceof Error ? e.message : 'unknown error'})`,
         timestamp: ts(),
       });
+      return null;
+    } finally {
+      if (abortControllerRef.current === controller) abortControllerRef.current = null;
     }
+  };
+
+  // Resolves the agent profile + model for both a real turn and an auto-continue.
+  const resolveTurnConfig = () => {
+    const selectedAgent = projectAgents.find(a => a.id === selectedAgentId) || PREDEFINED_AGENTS.find(a => a.id === selectedAgentId);
+    return {
+      agentName: selectedAgent ? selectedAgent.name : 'GENERAL_HELPER',
+      agentPersonas: selectedAgent ? {
+        identity_md: selectedAgent.identity_md,
+        soul_md: selectedAgent.soul_md,
+        agents_md: selectedAgent.agents_md,
+      } : null,
+      finalModel: model === 'custom' ? customModel.trim() : model,
+    };
+  };
+
+  const sendChatMessage = async (userMsgText: string) => {
+    if (!userMsgText.trim() || !activeProject || !activeChatId || loading) return;
+    const chatId = activeChatId;
+    const attachments = pendingAttachments;
+    setPendingAttachments([]);
+    stopRequestedRef.current = false;
+    autoContinueCountRef.current = 0;
+
+    addMessage(chatId, {
+      role: 'user',
+      text: userMsgText,
+      timestamp: ts(),
+      attachments: attachments.length > 0 ? attachments : undefined,
+    });
+    setLoading(true);
+
+    const { agentName, agentPersonas, finalModel } = resolveTurnConfig();
+    await streamChatTurn(chatId, {
+      projectId: activeProject.id,
+      projectName: activeProject.name,
+      chatId,
+      message: userMsgText,
+      model: finalModel,
+      agentName,
+      agentPersonas,
+      attachments,
+      webSearch,
+      // The server fetches history/memories/personas from Supabase itself;
+      // these ride along only for Supabase-less local setups.
+      ...(supabase ? {} : { history: currentMessages, projectMemories, projectPersonas }),
+    });
 
     setLoading(false);
+  };
+
+  // Fires after a USE_TOOL/RUN_CODE result is appended to history, so the
+  // model can react to it without the operator having to type "continue".
+  // Bounded by MAX_AUTO_CONTINUES and the manual STOP button (stopRequestedRef);
+  // the model can end the loop itself early by emitting <STOP/>.
+  const autoContinue = async (chatId: string) => {
+    if (stopRequestedRef.current) return;
+    if (autoContinueCountRef.current >= MAX_AUTO_CONTINUES) {
+      addMessage(chatId, {
+        role: 'system',
+        text: `[ AUTO-CONTINUE LIMIT REACHED (${MAX_AUTO_CONTINUES}) ] Reply to continue manually, or ask the agent to <STOP/> sooner next time.`,
+        timestamp: ts(),
+      });
+      return;
+    }
+    if (!activeProject) return;
+    autoContinueCountRef.current += 1;
+    setLoading(true);
+    const { agentName, agentPersonas, finalModel } = resolveTurnConfig();
+    const text = await streamChatTurn(chatId, {
+      projectId: activeProject.id,
+      projectName: activeProject.name,
+      chatId,
+      message: '',
+      auto: true,
+      model: finalModel,
+      agentName,
+      agentPersonas,
+      attachments: [],
+      webSearch,
+      ...(supabase ? {} : { history: currentMessages, projectMemories, projectPersonas }),
+    });
+    setLoading(false);
+    // A <STOP/> in the reply ends the loop even if it also asked for another
+    // tool call -- rendering already suppresses the raw tag either way.
+    if (text && hasStopTag(text)) stopRequestedRef.current = true;
+  };
+
+  const stopGeneration = () => {
+    stopRequestedRef.current = true;
+    abortControllerRef.current?.abort();
   };
 
   const handleSend = async () => {
@@ -1832,11 +1934,19 @@ export default function Home() {
                         {tagFor(msg.role)} {msg.timestamp}{msg.streaming ? ' — STREAMING' : ''}
                       </samp>
                       <div className="msg-body">
-                        {renderMessageContent(msg.streaming ? stripIncompleteTagTail(msg.text) : msg.text, `${msg.timestamp}-${i}`)}
+                        {renderMessageContent(
+                          stripStopTag(msg.streaming ? stripIncompleteTagTail(msg.text) : msg.text),
+                          `${msg.timestamp}-${i}`
+                        )}
                         {msg.attachments?.map((att, ai) => (
                           <AttachmentView key={`${att.path}-${ai}`} attachment={att} />
                         ))}
                         {msg.streaming && <samp className="loading-text">▋</samp>}
+                        {!msg.streaming && hasStopTag(msg.text) && (
+                          <samp style={{ display: 'block', marginTop: '6px', fontSize: 'var(--micro)', color: 'var(--fg-dim)' }}>
+                            [ STOPPED — awaiting operator input ]
+                          </samp>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -1952,11 +2062,12 @@ export default function Home() {
                   />
                   <button
                     className="exec-btn"
-                    onClick={handleSend}
-                    disabled={loading || (genMode ? !message.trim() : (!message.trim() && pendingAttachments.length === 0))}
+                    onClick={loading ? stopGeneration : handleSend}
+                    disabled={!loading && (genMode ? !message.trim() : (!message.trim() && pendingAttachments.length === 0))}
+                    title={loading ? 'Stop generation and cancel any pending auto-continue' : undefined}
                   >
-                    <span className="exec-label">{loading ? '...' : genMode ? 'GEN' : 'EXEC'}</span>
-                    <span className="exec-arrows">{">>>"}</span>
+                    <span className="exec-label">{loading ? 'STOP' : genMode ? 'GEN' : 'EXEC'}</span>
+                    <span className="exec-arrows">{loading ? '[ x ]' : '>>>'}</span>
                   </button>
                 </div>
               </div>

@@ -162,13 +162,18 @@ export async function POST(req: Request) {
       agentPersonas,
       attachments = [],
       webSearch = false,
+      // Set by autoContinue (page.tsx): the model reacting to a USE_TOOL/
+      // RUN_CODE result it hasn't seen yet, not a real operator turn. No
+      // user message is persisted; formattedHistory gets a synthetic,
+      // unpersisted nudge instead so the API still ends on a user turn.
+      auto = false,
       // Fallbacks used only when Supabase is not configured:
       history: clientHistory = [],
       projectMemories: clientMemories = [],
       projectPersonas: clientPersonas = [],
     } = await req.json();
 
-    if (!projectId || !message) {
+    if (!projectId || (!message && !auto)) {
       return Response.json({ error: 'projectId and message are required' }, { status: 400 });
     }
 
@@ -204,16 +209,19 @@ export async function POST(req: Request) {
       history = (rows || []).slice(-RECENT_MESSAGES);
 
       // Persist the user message BEFORE the model call so it survives failures.
-      const { data: userRow } = await db.from('memories').insert({
-        project_id: projectId,
-        chat_id: chatId,
-        content: message,
-        role: 'user',
-        metadata: attachments.length > 0 ? { attachments } : {},
-        parent_id: rows && rows.length > 0 ? rows[rows.length - 1].id : null,
-        timestamp: new Date().toISOString(),
-      }).select('id').single();
-      userMessageId = userRow?.id ?? null;
+      // Skipped for auto-continue: there's no real operator turn to record.
+      if (!auto) {
+        const { data: userRow } = await db.from('memories').insert({
+          project_id: projectId,
+          chat_id: chatId,
+          content: message,
+          role: 'user',
+          metadata: attachments.length > 0 ? { attachments } : {},
+          parent_id: rows && rows.length > 0 ? rows[rows.length - 1].id : null,
+          timestamp: new Date().toISOString(),
+        }).select('id').single();
+        userMessageId = userRow?.id ?? null;
+      }
 
       // Personas from the DB, not the client.
       const { data: personaRows } = await db
@@ -417,6 +425,15 @@ to main. Do not go looking for things to change unprompted — only propose
 edits when the operator asked you to look at the codebase or you're already
 working a task that surfaces a clear fix.
 
+After a USE_TOOL or RUN_CODE result lands, you are automatically re-invoked
+so you can react to it without waiting for the operator to say "continue" —
+this happens up to a fixed cap of auto-continues before it stops on its own.
+If a multi-step tool-use sequence is genuinely finished and you have nothing
+further to do without new operator input, end your reply with a bare <STOP/>
+so the session doesn't keep auto-continuing needlessly. Do not add <STOP/>
+after a normal reply that isn't part of a tool/sandbox loop — it's only
+meaningful right after a TOOL_RESULT or SANDBOX_RESULT you just acted on.
+
 The operator can switch the underlying AI model at any time; your persona files and
 memory persist across model swaps. Never invent project facts: the Memory Palace and
 chat history are the source of truth.
@@ -468,7 +485,15 @@ chat history are the source of truth.
       }
       return { role: m.role, content };
     });
-    if (formattedHistory.length === 0 || formattedHistory[formattedHistory.length - 1].content !== message) {
+    if (auto) {
+      // history already ends with the USE_TOOL/RUN_CODE result the model
+      // hasn't reacted to; most providers still expect a trailing user turn,
+      // so add an unpersisted nudge rather than a real (empty) message.
+      formattedHistory.push({
+        role: 'user',
+        content: 'Continue based on the tool/sandbox result above. If there is nothing further to do without new input from the operator, end your reply with <STOP/>.',
+      });
+    } else if (formattedHistory.length === 0 || formattedHistory[formattedHistory.length - 1].content !== message) {
       formattedHistory.push({ role: 'user', content: userContent });
     } else {
       formattedHistory[formattedHistory.length - 1].content = userContent;
